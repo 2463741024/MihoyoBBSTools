@@ -6,7 +6,7 @@ import push
 import config
 import random
 from loghelper import log
-from error import CookieError, StokenError
+from error import CookieError, StokenError, ConfigError
 
 
 def find_config(ext: str) -> list:
@@ -20,7 +20,7 @@ def find_config(ext: str) -> list:
         list: 符合条件的配置文件名列表
     """
     file_name = []
-    for files in os.listdir(config.path):
+    for files in sorted(os.listdir(config.path)):
         if os.path.splitext(files)[1] == ext:
             if config.config_prefix == "" or files.startswith(config.config_prefix):
                 file_name.append(files)
@@ -67,8 +67,7 @@ def get_config_list() -> list:
         if ql_dir is not None:
             config_list = ql_config(config_list)
     if len(config_list) == 0:
-        log.warning("未检测到配置文件，请确认 config 文件夹存在 .yaml/.yml 后缀名的配置文件！")
-        exit(1)
+        raise ConfigError("未检测到配置文件，请确认 config 文件夹存在 .yaml/.yml 后缀名的配置文件！")
     return config_list
 
 
@@ -91,7 +90,11 @@ def main_multi(autorun: bool) -> tuple:
     """
     log.info("AutoMihoyoBBS Multi User mode")
     log.info("正在搜索配置文件！")
-    config_list = get_config_list()
+    try:
+        config_list = get_config_list()
+    except (ConfigError, OSError) as e:
+        log.error(str(e))
+        return 1, str(e)
     if autorun:
         log.info(f"已搜索到 {len(config_list)} 个配置文件，正在开始执行！")
     else:
@@ -106,11 +109,16 @@ def main_multi(autorun: bool) -> tuple:
         config.config_Path = os.path.join(config.path, i)
         try:
             run_code, run_message = main.main()
-        except (CookieError, StokenError) as e:
+        except (CookieError, StokenError, ConfigError) as e:
             results["error"].append(i)
             if config.config.get("push", "") != "":
                 push_handler = push.PushHandler(config.config["push"])
-                error_msg = "账号 Cookie 出错！" if isinstance(e, CookieError) else "账号 Stoken 有问题！"
+                if isinstance(e, CookieError):
+                    error_msg = "账号 Cookie 出错！"
+                elif isinstance(e, StokenError):
+                    error_msg = "账号 Stoken 有问题！"
+                else:
+                    error_msg = f"配置文件有误：{e}"
                 push_handler.push(1, error_msg)
         else:
             # 增强对返回值的处理，确保所有可能的情况都被考虑到

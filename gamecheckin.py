@@ -5,7 +5,7 @@ import config
 import random
 import captcha
 import setting
-from error import *
+from error import CookieError
 from request import get_new_session
 from loghelper import log
 from account import get_account_list
@@ -70,32 +70,40 @@ class GameCheckin:
         for i in range(max_retry):
             req = self.http.get(self.rewards_api, params={"act_id": self.act_id}, headers=self.headers)
             data = req.json()
-            if data["retcode"] == 0:
-                return data["data"]["awards"]
+            if data.get("retcode") == 0:
+                return (data.get("data") or {}).get("awards") or []
             log.warning(f"获取签到奖励列表失败，重试次数：{i + 1}")
             time.sleep(5)  # 等待5秒后重试
         log.warning("获取签到奖励列表失败")
         return []
+
+    def get_reward_text(self, sign_days: int) -> str:
+        """安全获取指定签到天数的奖励文本，避免奖励列表为空或索引越界"""
+        if not self.checkin_rewards:
+            return "奖励信息获取失败"
+        index = max(0, min(sign_days, len(self.checkin_rewards) - 1))
+        return tools.get_item(self.checkin_rewards[index])
 
     # 判断签到
     def is_sign(self, region: str, uid: str, update: bool = False) -> dict:
         req = self.http.get(self.is_sign_api, params={"act_id": self.act_id, "region": region, "uid": uid},
                             headers=self.headers)
         data = req.json()
-        if data["retcode"] != 0:
+        if data.get("retcode") != 0:
             if not update and login.update_cookie_token():
                 self.set_headers()
                 return self.is_sign(region, uid, True)
             log.warning("获取账号签到信息失败！")
-            print(req.text)
-            config.config["games"]["cn"][self.game_mid]["auto_checkin"] = False
-            config.save_config()
-            raise CookieError("BBS Cookie Errror")
-        return data["data"]
+            log.debug(req.text)
+            raise CookieError("BBS Cookie Error")
+        return data.get("data") or {}
 
     def check_in(self, account):
         header = self.headers.copy()
-        retries = config.config['games']['cn'].get('retries', 3)
+        try:
+            retries = max(1, int(config.config['games']['cn'].get('retries', 3)))
+        except (TypeError, ValueError):
+            retries = 3
         result = None
         for i in range(1, retries + 1):
             if i > 1:
@@ -107,10 +115,11 @@ class GameCheckin:
                 log.warning('429 Too Many Requests，即将进入下一次请求')
                 continue
             data = result.json()
-            if data["retcode"] == 0 and data["data"]["success"] == 1 and i < retries:
-                captcha_result = captcha.game_captcha(data["data"]["gt"], data["data"]["challenge"])
+            resp_data = data.get("data") or {}
+            if data.get("retcode") == 0 and resp_data.get("success") == 1 and i < retries:
+                captcha_result = captcha.game_captcha(resp_data.get("gt"), resp_data.get("challenge"))
                 if captcha_result is not None:
-                    challenge = data["data"]["challenge"]
+                    challenge = resp_data["challenge"]
                     if type(captcha_result) == dict:
                         validate = captcha_result["validate"]
                         challenge = captcha_result["challenge"]
@@ -132,8 +141,9 @@ class GameCheckin:
             log.warning(f"账号没有绑定任何{self.game_name}账号！")
             return_data += f"\n并没有绑定任何{self.game_name}账号"
             return return_data
+        black_list = {str(uid) for uid in (config.config["games"]["cn"][self.game_mid].get("black_list") or [])}
         for account in self.account_list:
-            if account[1] in config.config["games"]["cn"][self.game_mid]["black_list"]:
+            if str(account[1]) in black_list:
                 continue
             log.info(f"正在为{self.player_name}「{account[0]}」进行签到...")
             time.sleep(random.randint(2, 8))
@@ -141,10 +151,10 @@ class GameCheckin:
             if is_data.get("first_bind", False):
                 log.warning(f"{self.player_name}「{account[0]}」是第一次绑定米游社，请先手动签到一次")
                 continue
-            sign_days = is_data["total_sign_day"] - 1
-            if is_data["is_sign"]:
+            sign_days = is_data.get("total_sign_day", 1) - 1
+            if is_data.get("is_sign"):
                 log.info(f"{self.player_name}「{account[0]}」今天已经签到过了~\r\n今天获得的奖"
-                         f"励是{tools.get_item(self.checkin_rewards[sign_days])}")
+                         f"励是{self.get_reward_text(sign_days)}")
                 sign_days += 1
             else:
                 time.sleep(random.randint(2, 8))
@@ -155,18 +165,19 @@ class GameCheckin:
                     continue
                 if req.status_code != 429:
                     data = req.json()
-                    if data["retcode"] == 0 and data["data"]["success"] == 0:
+                    if data.get("retcode") == 0 and (data.get("data") or {}).get("success") == 0:
                         log.info(
                             f"{self.player_name}「{account[0]}」签到成功~\r\n今天获得的奖励是"
-                            f"{tools.get_item(self.checkin_rewards[0 if sign_days == 0 else sign_days + 1])}")
+                            f"{self.get_reward_text(0 if sign_days == 0 else sign_days + 1)}")
                         sign_days += 2
-                    elif data["retcode"] == -5003:
+                    elif data.get("retcode") == -5003:
                         log.info(
                             f"{self.player_name}{account[0]}今天已经签到过了~\r\n今天获得的奖励是"
-                            f"{tools.get_item(self.checkin_rewards[sign_days])}")
+                            f"{self.get_reward_text(sign_days)}")
                     else:
                         s = "账号签到失败！"
-                        if data["data"] != "" and data.get("data").get("success", -1):
+                        resp_data = data.get("data")
+                        if isinstance(resp_data, dict) and resp_data.get("success", -1):
                             s += "原因：验证码\njson 信息：" + req.text
                         log.warning(s)
                         return_data += f"\n{account[0]}，触发验证码，本次签到失败"
@@ -175,7 +186,7 @@ class GameCheckin:
                     return_data += f"\n{account[0]}，本次签到失败"
                     continue
             return_data += f"\n{account[0]}已连续签到{sign_days}天\n" \
-                           f"今天获得的奖励是{tools.get_item(self.checkin_rewards[sign_days - 1])}"
+                           f"今天获得的奖励是{self.get_reward_text(sign_days - 1)}"
         return return_data
 
 

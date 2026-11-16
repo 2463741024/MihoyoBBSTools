@@ -22,7 +22,7 @@ jobs:
 
       - name: Get current date
         id: date
-        run: echo "::set-output name=today::$(date +'%Y-%m-%d')"
+        run: echo "today=$(date +'%Y-%m-%d')" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

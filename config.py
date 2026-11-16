@@ -1,8 +1,9 @@
-import collections
 import os
+
 import yaml
 from copy import deepcopy
 
+from error import ConfigError
 from loghelper import log
 
 # 这个字段现在还没找好塞什么地方好，就先塞config这里了
@@ -72,10 +73,27 @@ def copy_config():
     return deepcopy(config_raw)
 
 
+def merge_default_config(defaults: dict, data: dict) -> dict:
+    """用默认配置补全缺失项，保证旧版/不完整的配置文件不会导致 KeyError"""
+    if not isinstance(data, dict):
+        return deepcopy(defaults)
+    merged = deepcopy(defaults)
+    for key, value in data.items():
+        if value is None:
+            # 配置项留空时回退到默认值，避免后续代码对 None 做迭代/取值
+            continue
+        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
+            merged[key] = merge_default_config(merged[key], value)
+        else:
+            merged[key] = deepcopy(value)
+    return merged
+
+
 def config_v11_update(data: dict):
     global update_config_need
     update_config_need = True
-    data['version'] = 13
+    old_cloud_games = data.get('cloud_games') or {}
+    old_genshin = old_cloud_games.get('genshin') or {}
     new_config = {}
     for key in data:
         if key == "account":
@@ -84,9 +102,11 @@ def config_v11_update(data: dict):
             new_config['cloud_games'] = deepcopy(config_raw['cloud_games'])
             continue
         new_config[key] = deepcopy(data[key])
-    new_config['cloud_games']['cn']['enable'] = data['cloud_games']['genshin']['enable']
-    new_config['cloud_games']['cn']['genshin']['enable'] = data['cloud_games']['genshin']['enable']
-    new_config['cloud_games']['cn']['genshin']['token'] = data['cloud_games']['genshin']['token']
+    new_config.setdefault('cloud_games', deepcopy(config_raw['cloud_games']))
+    new_config['cloud_games']['cn']['enable'] = old_genshin.get('enable', False)
+    new_config['cloud_games']['cn']['genshin']['enable'] = old_genshin.get('enable', False)
+    new_config['cloud_games']['cn']['genshin']['token'] = old_genshin.get('token', "")
+    new_config['version'] = 13
     log.info("config 已升级到：13")
     return new_config
 
@@ -95,7 +115,9 @@ def config_v12_update(data: dict):
     global update_config_need
     update_config_need = True
     data['version'] = 13
-    data['cloud_games']['cn']['zzz'] = {'enable': False, 'token': ""}
+    cloud_games = data.setdefault('cloud_games', deepcopy(config_raw['cloud_games']))
+    cloud_games.setdefault('cn', deepcopy(config_raw['cloud_games']['cn']))
+    cloud_games['cn'].setdefault('zzz', {'enable': False, 'token': ""})
     log.info("config 已升级到: 13")
     return data
 
@@ -107,7 +129,7 @@ def config_v13_update(data: dict):
 
     # 确保版本号更新为14
     new_config['version'] = 14
-    new_config['device']['fp'] = config['device'].get('fp', '')
+    new_config.setdefault('device', {}).setdefault('fp', '')
 
     log.info("config 已升级到：14")
     return new_config
@@ -118,30 +140,56 @@ def update_v14_update(data: dict):
     update_config_need = True
     new_config = deepcopy(data)
     new_config['version'] = 15
-    new_config['web_activity'] = {'enable': False, 'activities': []}
+    new_config.setdefault('web_activity', {'enable': False, 'activities': []})
     log.info("config 已升级到：15")
     return new_config
 
 
 def load_config(p_path=None):
-    global config
+    global config, update_config_need
     if not p_path:
         p_path = config_Path
-    with open(p_path, "r", encoding='utf-8') as f:
-        data = yaml.load(f, Loader=yaml.FullLoader)
-    if data['version'] != config_raw['version']:
-        if data['version'] == 11:
+    try:
+        with open(p_path, "r", encoding='utf-8') as f:
+            data = yaml.load(f, Loader=yaml.FullLoader)
+    except FileNotFoundError as exc:
+        raise ConfigError(f"配置文件不存在：{p_path}，请复制 config.yaml.example 并重命名为 config.yaml") from exc
+    except IsADirectoryError as exc:
+        raise ConfigError(f"配置文件路径无效：{p_path}") from exc
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"配置文件格式错误：{p_path}") from exc
+    except OSError as exc:
+        raise ConfigError(f"配置文件读取失败：{p_path}：{exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ConfigError(f"配置文件内容为空或格式错误：{p_path}")
+
+    raw_version = data.get('version', 0)
+    try:
+        version = int(raw_version)
+    except (TypeError, ValueError):
+        version = 0
+    if version != config_raw['version']:
+        if version == 11:
             data = config_v11_update(data)
-        if data['version'] == 12:
+        if data.get('version') == 12:
             data = config_v12_update(data)
-        if data['version'] == 13:
+        if data.get('version') == 13:
             data = config_v13_update(data)
-        if data['version'] == 14:
+        if data.get('version') == 14:
             data = update_v14_update(data)
-        save_config(p_config=data)
+        if data.get('version') != config_raw['version']:
+            log.warning(f"未知的 config 版本：{raw_version}，将按默认配置补全缺失项")
+            update_config_need = True
+            data['version'] = config_raw['version']
+
+    # 用默认配置补全缺失项，避免旧版配置缺少新字段时崩溃
+    data = merge_default_config(config_raw, data)
     # 去除cookie最末尾的空格
     data["account"]["cookie"] = str(data["account"]["cookie"]).rstrip(' ')
     config = data
+    if version != config_raw['version']:
+        save_config(p_path=p_path, p_config=data)
     log.info("Config 加载完毕")
     return data
 
@@ -155,11 +203,11 @@ def save_config(p_path=None, p_config=None):
         p_path = config_Path
     if not p_config:
         p_config = config
-    with open(p_path, "w+") as f:
+    with open(p_path, "w+", encoding='utf-8') as f:
         try:
             f.seek(0)
             f.truncate()
-            f.write(yaml.dump(p_config, Dumper=yaml.Dumper, sort_keys=False))
+            f.write(yaml.dump(p_config, Dumper=yaml.Dumper, sort_keys=False, allow_unicode=True))
             f.flush()
         except OSError:
             serverless = True
@@ -186,7 +234,7 @@ def clear_cookie():
         log.info("云函数执行，无法保存")
         return None
     config["account"]["cookie"] = "CookieError"
-    log.info(f"Cookie 已删除")
+    log.info("Cookie 已删除")
     save_config()
 
 

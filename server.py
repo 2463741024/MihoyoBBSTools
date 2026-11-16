@@ -448,17 +448,17 @@ def command_loop(config):
 if __name__ == '__main__':
     log.info('Running in Server Mode')
     
-    # 初始化配置
-    config = ServerConfig()
+    # 初始化配置（避免使用 config 变量名覆盖上面导入的 config 模块）
+    server_config = ServerConfig()
     
     # 检查配置文件存在以确定模式
     config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "config", "config.yaml")
     if os.path.exists(config_path):
-        config.set_mod(1)
+        server_config.set_mod(1)
     else:
-        config.set_mod(2)
+        server_config.set_mod(2)
     
-    log.info(f"Switching to mode {config.get_mod()}")
+    log.info(f"Switching to mode {server_config.get_mod()}")
     
     # 启动命令循环
-    command_loop(config)
+    command_loop(server_config)

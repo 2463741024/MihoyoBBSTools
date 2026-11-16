@@ -2,7 +2,7 @@ import os
 import time
 import random
 from typing import Tuple, Optional
-from enum import Enum, auto
+from enum import Enum
 
 import push
 import login
@@ -15,7 +15,7 @@ import hoyo_checkin
 import web_activity
 import os_cloudgames
 from loghelper import log
-from error import CookieError, StokenError
+from error import CookieError, StokenError, ConfigError
 
 
 class StatusCode(Enum):
@@ -34,7 +34,11 @@ def check_github_actions() -> None:
 
 def initialize_config() -> Tuple[bool, Optional[str]]:
     """初始化配置"""
-    config.load_config()
+    try:
+        config.load_config()
+    except ConfigError as e:
+        log.error(str(e))
+        return False, str(e)
     if not config.config["enable"]:
         log.warning("Config 未启用！")
         return False, "Config 未启用！"
@@ -142,6 +146,7 @@ def main() -> Tuple[int, str]:
 
 def task_run() -> None:
     """任务运行入口"""
+    message = ""
 
     try:
         status_code, message = main()
@@ -154,6 +159,10 @@ def task_run() -> None:
         status_code = StatusCode.FAILURE.value
         push_message = f"账号 Stoken 出错！\n{message}"
         log.error("账号 Stoken 有问题！")
+    except Exception as e:
+        status_code = StatusCode.FAILURE.value
+        push_message = f"脚本执行出现未预期错误：{e}"
+        log.exception("脚本执行出现未预期错误")
 
     push.push(status_code, push_message)
 

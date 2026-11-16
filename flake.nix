@@ -20,7 +20,6 @@
           python-pkgs: with python-pkgs; [
             httpx
             pyyaml
-            pytz
           ]
         );
 

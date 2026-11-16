@@ -36,11 +36,16 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
         headers['x-rpc-signgame'] = "zzz"
 
     info_list = http.get(info_url, headers=headers).json()
+    if info_list.get("retcode") != 0:
+        msg = info_list.get("message") or info_list
+        log.error(f"获取签到信息失败：{msg}")
+        return f"获取签到信息失败：{msg}"
 
-    today = info_list.get("data", {}).get("today")
-    total_sign_in_day = info_list.get("data", {}).get("total_sign_day")
-    already_signed_in = info_list.get("data", {}).get("is_sign")
-    first_bind = info_list.get("data", {}).get("first_bind")
+    info_data = info_list.get("data") or {}
+    today = info_data.get("today")
+    total_sign_in_day = info_data.get("total_sign_day") or 0
+    already_signed_in = info_data.get("is_sign")
+    first_bind = info_data.get("first_bind")
 
     if already_signed_in:
         log.info("今天已经签到过")
@@ -54,7 +59,10 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
 
     awards_data = http.get(reward_url, headers=headers).json()
 
-    awards = awards_data.get("data", {}).get("awards")
+    awards = (awards_data.get("data") or {}).get("awards") or []
+    if not awards:
+        log.warning("获取签到奖励列表失败")
+        return "获取签到奖励列表失败"
 
     log.info(f"准备签到：{today} ")
 
@@ -74,11 +82,13 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
         ret_msg = "今天已经签到过"
         return ret_msg
     elif code != 0:
-        log.error(response['message'])
-        ret_msg = response['message']
+        msg = response.get("message") or response
+        log.error(msg)
+        ret_msg = msg
         return ret_msg
 
-    reward = awards[total_sign_in_day - 1]
+    reward_index = min(max(total_sign_in_day - 1, 0), len(awards) - 1)
+    reward = awards[reward_index]
 
     log.info("签到成功")
     log.info(f"\t已连续签到 {total_sign_in_day + 1} 天")
@@ -126,7 +136,7 @@ def run_task():
     ret_msg = ''
     games = config.config['games']['os']
 
-    if games['cookie'] == '':
+    if games.get('cookie', '') == '':
         log.warning("国际服未配置 Cookie！")
         games['enable'] = False
         config.save_config()
@@ -137,6 +147,9 @@ def run_task():
             try:
                 ret_msg += f"\n\n{globals()[game]()}"
             except KeyError:
-                pass
+                log.warning(f"国际服不支持的游戏配置项：{game}")
+            except Exception as e:
+                log.error(f"国际服 {game} 签到异常：{e}")
+                ret_msg += f"\n\n{game}：签到异常"
 
     return ret_msg

@@ -6,10 +6,10 @@ import base64
 import config
 import urllib
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from request import get_new_session, get_new_session_use_proxy
 from loghelper import log
-from configparser import ConfigParser, NoOptionError
+from configparser import ConfigParser, NoOptionError, NoSectionError
 
 title = {
     -99: "「米游社签到」依赖缺失",
@@ -63,7 +63,7 @@ class PushHandler:
         try:
             block_str = self.cfg.get('setting', 'push_block_keys')
             block_keys = block_str.split(',')
-        except:
+        except (NoSectionError, NoOptionError):
             return msg
         else:
             for block_key in block_keys:
@@ -229,7 +229,8 @@ class PushHandler:
         if self.cfg.getboolean('smtp', 'background', fallback=True):
             image_url = get_background_url()
 
-        with open("assets/email_example.html", encoding="utf-8") as f:
+        template_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "assets", "email_example.html")
+        with open(template_path, encoding="utf-8") as f:
             EMAIL_TEMPLATE = f.read()
         message = EMAIL_TEMPLATE.format(title=get_push_title(status_id), message=push_message.replace("\n", "<br/>"),
                                         background_image=get_background_img_html(image_url),
@@ -424,8 +425,6 @@ class PushHandler:
         log.info(f"推送结果：{rep['reason']}")
 
     def discord(self, status_id, push_message):
-        import pytz
-
         def get_color() -> int:
             embed_color = 16744192
             if status_id == 0:  # 成功
@@ -454,7 +453,7 @@ class PushHandler:
                             "icon_url": "https://github.com/DGP-Studio/Snap.Hutao.Docs/blob/main/docs/.vuepress/public"
                                         "/images/202308/hoyolab-miyoushe-Icon.png?raw=true "
                         },
-                        "timestamp": datetime.now(timezone.utc).astimezone(pytz.timezone('Asia/Shanghai')).isoformat(),
+                        "timestamp": datetime.now(timezone(timedelta(hours=8))).isoformat(),
                     }
                 ],
                 "username": "MihoyoBBSTools",
@@ -473,7 +472,7 @@ class PushHandler:
             from win11toast import toast
             toast(app_id="MihoyoBBSTools", title=get_push_title(status_id), body=push_message, icon='')
         except:
-            log.error(f"请先pip install win11toast再使用win通知")
+            log.error("请先pip install win11toast再使用win通知")
 
     def wxpusher(self, status_id, push_message):
         """

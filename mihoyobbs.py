@@ -25,6 +25,9 @@ class Mihoyobbs:
         self.bbs_config = config.config["mihoyobbs"]
         self.bbs_list = [setting.mihoyobbs_List.get(i) for i in self.bbs_config["checkin_list"]
                          if setting.mihoyobbs_List.get(i) is not None]
+        if not self.bbs_list:
+            log.warning("签到分区配置无效，使用默认分区（大别野、原神）")
+            self.bbs_list = [setting.mihoyobbs_List[i] for i in (5, 2)]
         self.headers = {
             "DS": tools.get_ds(web=False),
             "cookie": login.get_stoken_cookie(),
@@ -87,7 +90,7 @@ class Mihoyobbs:
         captcha_result = captcha.bbs_captcha(data["data"]["gt"], data["data"]["challenge"])
         if captcha_result is not None:
             challenge = data["data"]["challenge"]
-            if type(captcha_result) == dict:
+            if isinstance(captcha_result, dict):
                 validate = captcha_result["validate"]
                 challenge = captcha_result["challenge"]
             else:
@@ -107,7 +110,7 @@ class Mihoyobbs:
         log.info("正在获取任务列表")
         req = http.get(url=setting.bbs_tasks_list, params={"point_sn": "myb"}, headers=self.task_header)
         data = req.json()
-        if "err" in data["message"] or data["retcode"] == -100:
+        if "err" in (data.get("message") or "") or data.get("retcode") == -100:
             if not update and login.update_cookie_token():
                 self.task_header['Cookie'] = config.config['account']['cookie']
                 return self.get_tasks_list(True)
@@ -150,7 +153,6 @@ class Mihoyobbs:
 
     # 获取要帖子列表
     def get_list(self) -> list:
-        choice_post_list = []
         log.info("正在获取帖子列表......")
         req = http.get(url=setting.bbs_post_list_url,
                        params={"forum_id": self.bbs_list[0]["forumId"],
@@ -158,11 +160,23 @@ class Mihoyobbs:
                                "page_size": 20, "sort_type": 1},
                        headers=self.headers)
         log.debug(req.text)
-        data = req.json()["data"]["list"]
-        while len(choice_post_list) < self.get_max_req_post_num():
-            post = random.choice(data)
-            if post["post"]["subject"] not in [x[1] for x in choice_post_list]:
-                choice_post_list.append([post["post"]["post_id"], post["post"]["subject"]])
+        try:
+            data = req.json()["data"]["list"]
+        except (ValueError, KeyError, TypeError):
+            log.error(f"获取帖子列表失败：{req.text}")
+            return []
+        # 按标题去重后随机选取，避免随机采样凑不够数量时陷入死循环
+        unique_posts = {}
+        for item in data:
+            post = item.get("post") or {}
+            post_id = post.get("post_id")
+            subject = post.get("subject")
+            if post_id is None or subject is None:
+                continue
+            unique_posts.setdefault(subject, [post_id, subject])
+        posts = list(unique_posts.values())
+        random.shuffle(posts)
+        choice_post_list = posts[:self.get_max_req_post_num()]
         log.info(f"已获取 {len(choice_post_list)} 个帖子")
         return choice_post_list
 
@@ -176,8 +190,7 @@ class Mihoyobbs:
         for forum in self.bbs_list:
             challenge = None
             for retry_count in range(2):
-                post_data = json.dumps({"gids": forum["id"]})
-                post_data.replace(' ', '')
+                post_data = json.dumps({"gids": forum["id"]}, separators=(",", ":"))
                 header["DS"] = tools.get_ds2("", post_data)
                 req = http.post(url=setting.bbs_sign_url, data=post_data, headers=header)
                 log.debug(req.text)
@@ -262,6 +275,9 @@ class Mihoyobbs:
         log.info("正在执行帖子相关任务（看帖/点赞/分享）......")
         if self.task_do["read"] and self.task_do["like"] and self.task_do["share"]:
             log.info("帖子相关任务（看帖/点赞/分享）已全部完成!")
+            return
+        if not self.postsList:
+            log.warning("没有获取到可用的帖子，跳过看帖/点赞/分享任务")
             return
         # 执行帖子的阅读 点赞 和 分享，其中阅读是必完成的
         for post in self.postsList:
