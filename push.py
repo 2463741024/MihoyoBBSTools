@@ -45,6 +45,9 @@ class PushHandler:
             file_path = os.getenv("AutoMihoyoBBS_push_path")
         if os.getenv("AutoMihoyoBBS_push_name"):
             file_name = os.getenv("AutoMihoyoBBS_push_name")
+            # 青龙环境变量通常只写文件名前缀（如 push），这里自动补全 .ini
+            if not os.path.splitext(file_name)[1]:
+                file_name = f"{file_name}.ini"
         return os.path.join(file_path, file_name)
 
     def load_config(self):
@@ -53,7 +56,8 @@ class PushHandler:
             self.cfg.read(file_path, encoding='utf-8')
             return True
         else:
-            if self.config_name != "push.ini":
+            default_path = os.path.join(self.config_path, "push.ini")
+            if file_path != default_path:
                 log.warning(f"配置文件 {file_path} 不存在！")
             return False
 
@@ -241,12 +245,12 @@ class PushHandler:
         message['To'] = smtp_info["toaddr"]
         message['From'] = f"{smtp_info['subject']}<{smtp_info['fromaddr']}>"
         if self.cfg.getboolean("smtp", "ssl_enable"):
-            server = smtplib.SMTP_SSL(smtp_info["mailhost"], self.cfg.getint("smtp", "port"))
+            server = smtplib.SMTP_SSL(smtp_info["mailhost"], self.cfg.getint("smtp", "port"), timeout=30)
         else:
-            server = smtplib.SMTP(smtp_info["mailhost"], self.cfg.getint("smtp", "port"))
-        server.login(smtp_info["username"], smtp_info["password"])
-        server.sendmail(smtp_info["fromaddr"], smtp_info["toaddr"], message.as_string())
-        server.close()
+            server = smtplib.SMTP(smtp_info["mailhost"], self.cfg.getint("smtp", "port"), timeout=30)
+        with server:
+            server.login(smtp_info["username"], smtp_info["password"])
+            server.sendmail(smtp_info["fromaddr"], smtp_info["toaddr"], message.as_string())
         log.info("邮件发送成功啦")
 
     def wecom(self, status_id, push_message):

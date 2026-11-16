@@ -25,6 +25,11 @@ class StatusCode(Enum):
     CAPTCHA_TRIGGERED = 3
 
 
+def exception_message(error: Exception) -> str:
+    """提取更友好的异常描述"""
+    return str(getattr(error, "info", error))
+
+
 def check_github_actions() -> None:
     """检查是否在GitHub Actions环境运行"""
     if os.getenv('GITHUB_ACTIONS') == 'true':
@@ -59,54 +64,22 @@ def handle_login() -> None:
         account_cfg["cookie"] = tools.tidy_cookie(account_cfg["cookie"])
 
 
-def run_mihoyobbs() -> Tuple[str, bool]:
+def run_mihoyobbs() -> str:
     """执行米游社签到任务"""
-    return_data = ""
-    raise_stoken = False
-
-    if config.config["mihoyobbs"]["enable"]:
-        if config.config["account"]["stoken"] == "StokenError":
-            return_data = "米游社：\n账号 Stoken 异常"
-            raise_stoken = True
-        else:
-            try:
-                bbs = mihoyobbs.Mihoyobbs()
-                return_data = bbs.run_task()
-            except StokenError:
-                raise_stoken = True
-    return return_data, raise_stoken
+    if not config.config["mihoyobbs"]["enable"]:
+        return ""
+    if config.config["account"]["stoken"] == "StokenError":
+        raise StokenError("账号 Stoken 异常")
+    return mihoyobbs.Mihoyobbs().run_task()
 
 
-def run_cn_tasks() -> str:
-    """执行国服任务"""
-    result = []
-    if config.config["games"]['cn']["enable"]:
-        result.append(gamecheckin.run_task())
-    if config.config["cloud_games"]['cn']["enable"]:
-        log.info("正在进行云游戏签到")
-        result.append(cloudgames.run_task())
-    return "\n\n".join(filter(None, result))
-
-
-def run_os_tasks() -> str:
-    """执行国际服任务"""
-    result = []
-    if config.config["games"]['os']["enable"]:
-        log.info("海外版：")
-        os_result = hoyo_checkin.run_task()
-        if os_result:
-            result.append(f"海外版：{os_result}")
-    if config.config["cloud_games"]['os']["enable"]:
-        log.info("正在进行云游戏国际版签到")
-        result.append(os_cloudgames.run_task())
-    return "\n\n".join(filter(None, result))
-
-
-def run_web_activity() -> None:
+def run_web_activity(errors: list = None) -> str:
     """执行网页活动任务"""
-    if config.config["web_activity"]['enable']:
-        log.info("正在进行米游社网页活动任务")
-        web_activity.run_task()
+    if not config.config["web_activity"]['enable']:
+        return ""
+    log.info("正在进行米游社网页活动任务")
+    web_activity.run_task(errors)
+    return ""
 
 
 def main() -> Tuple[int, str]:
@@ -117,31 +90,86 @@ def main() -> Tuple[int, str]:
     if not success:
         return StatusCode.FAILURE.value, msg
 
-    handle_login()
+    return_data = []
+    errors = []
+    section_success = 0
+
+    def run_section(section_name: str, func) -> str:
+        """执行单个模块，异常不会影响其他模块"""
+        nonlocal section_success
+        try:
+            result = func()
+        except (CookieError, StokenError) as e:
+            message = f"{section_name}：{exception_message(e)}"
+            log.error(message)
+            errors.append(message)
+            return ""
+        except Exception as e:
+            message = f"{section_name}：{type(e).__name__}: {e}"
+            log.exception(f"{section_name}执行出现异常")
+            errors.append(message)
+            return ""
+        section_success += 1
+        return result or ""
+
+    # 登录失败不应阻塞使用 Cookie / 云游戏 Token 的其他任务
+    try:
+        handle_login()
+    except Exception as e:
+        message = f"登录：{type(e).__name__}: {exception_message(e)}"
+        log.exception("登录流程出现异常，将跳过登录并继续执行其他任务")
+        errors.append(message)
 
     if config.config["account"]["cookie"] == "CookieError":
-        raise CookieError('Cookie expires')
+        message = "账号 Cookie 异常，依赖 Cookie 的任务可能失败"
+        log.error(message)
+        errors.append(message)
 
-    return_data = []
+    # 各模块独立执行，单个模块的网络异常不会中断后续任务
+    if config.config["mihoyobbs"]["enable"]:
+        result = run_section("米游社", run_mihoyobbs)
+        if result:
+            return_data.append(result)
+
+    if config.config["games"]['cn']["enable"]:
+        result = run_section("国服游戏签到", lambda: gamecheckin.run_task(errors))
+        if result:
+            return_data.append(result)
+
+    if config.config["cloud_games"]['cn']["enable"]:
+        log.info("正在进行云游戏签到")
+        result = run_section("国服云游戏签到", lambda: cloudgames.run_task(errors))
+        if result:
+            return_data.append(result)
+
+    if config.config["games"]['os']["enable"]:
+        log.info("海外版：")
+        result = run_section("国际服游戏签到", lambda: hoyo_checkin.run_task(errors))
+        if result:
+            return_data.append(f"海外版：{result}")
+
+    if config.config["cloud_games"]['os']["enable"]:
+        log.info("正在进行云游戏国际版签到")
+        result = run_section("国际服云游戏签到", lambda: os_cloudgames.run_task(errors))
+        if result:
+            return_data.append(result)
+
+    if config.config["web_activity"]['enable']:
+        result = run_section("网页活动", lambda: run_web_activity(errors))
+        if result:
+            return_data.append(result)
+
+    if errors:
+        return_data.append("执行异常：\n" + "\n".join(f"- {err}" for err in errors))
+
     status_code = StatusCode.SUCCESS.value
-
-    # 执行各模块任务
-    mihoyo_result, raise_stoken = run_mihoyobbs()
-    return_data.append(mihoyo_result)
-
-    return_data.append(run_cn_tasks())
-    return_data.append(run_os_tasks())
-
-    run_web_activity()
-
-    if raise_stoken:
-        raise StokenError("Stoken 异常")
-
-    result_msg = "\n".join(filter(None, return_data))
-    if "触发验证码" in result_msg:
+    if errors:
+        status_code = (StatusCode.FAILURE.value if section_success == 0
+                       else StatusCode.PARTIAL_FAILURE.value)
+    elif "触发验证码" in "\n".join(return_data):
         status_code = StatusCode.CAPTCHA_TRIGGERED.value
 
-    return status_code, result_msg
+    return status_code, "\n".join(filter(None, return_data))
 
 
 def task_run() -> None:
@@ -164,7 +192,10 @@ def task_run() -> None:
         push_message = f"脚本执行出现未预期错误：{e}"
         log.exception("脚本执行出现未预期错误")
 
-    push.push(status_code, push_message)
+    try:
+        push.push(status_code, push_message)
+    except Exception:
+        log.exception("推送执行出现未预期错误")
 
 
 if __name__ == "__main__":

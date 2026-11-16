@@ -2,8 +2,10 @@ import config
 from loghelper import log
 
 
-def run_task():
+def run_task(errors: list = None):
     """根据配置执行网页活动任务"""
+    if errors is None:
+        errors = []
     if not config.config.get('web_activity', {}).get('enable', False):
         log.info("网页活动功能未启用")
         return
@@ -29,4 +31,5 @@ def run_task():
             else:
                 log.warning(f"未找到活动函数: {activity}")
         except Exception as e:
-            log.error(f"执行活动 {activity} 时出错: {str(e)}")
+            log.exception(f"执行活动 {activity} 时出错")
+            errors.append(f"网页活动 {activity}：{type(e).__name__}: {e}")

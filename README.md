@@ -20,17 +20,29 @@
 
   3.支持国际服：崩坏3、未定事件簿、原神、崩坏：星穹铁道、绝区零的游戏签到
 
+  4.支持国服/国际服云原神、云绝区零签到
+
+  5.登录、米游社、游戏签到、云游戏等模块独立执行，单个模块出现网络异常不会中断其他任务
+
+## 任务隔离与错误通知
+
+- 各模块独立执行：米游社异常时，游戏签到仍会继续；单个游戏签到失败也不影响其他游戏。
+- 出现异常时，推送/邮件消息会附带模块名称和具体异常信息，状态码为 `1`（全部失败）或 `2`（部分失败）。
+- 配置了 `error_push_only = true` 时，失败任务仍会发送通知。
+- 邮件推送使用 SMTP 时会设置 30 秒超时，避免网络异常导致任务长时间卡住。
+- 青龙面板默认使用面板通知；项目推送失败或镜像缺少 `notify` 模块时会自动降级，避免任务直接退出。
+
 ## 如何使用程序
 
 - **部署方法**
 
-  1. 使用[Git](https://git-scm.com/)或[点击此处](https://github.com/Womsxd/MihoyoBBSTools/archive/refs/heads/master.zip)下载本项目
+  1. 使用[Git](https://git-scm.com/)或[点击此处](https://github.com/2463741024/MihoyoBBSTools/archive/refs/heads/master.zip)下载本项目
 
   2. 下载[Python3](https://www.python.org/downloads/)
 
   3. 解压本项目压缩包,在解压目录中**Shift+右键** 打开你的命令提示符 cmd 或 powershell
 
-  4. [requirements.txt](https://raw.githubusercontent.com/Womsxd/MihoyoBBSTools/master/requirements.txt) 是所需第三方模块，执行 `pip install -r requirements.txt` 安装模块
+  4. [requirements.txt](https://raw.githubusercontent.com/2463741024/MihoyoBBSTools/master/requirements.txt) 是所需第三方模块，执行 `pip install -r requirements.txt` 安装模块
 
   5. 打开目录中的**config 文件夹**复制`config.yaml.example`并改名为`config.yaml`，脚本的多用户功能靠读取不同的配置文件实现，你可以创建无数个`自定义名字.yaml`，脚本会扫描**config**目录下`yaml`为拓展名的文件，并按照名称顺序依次执行。
 
@@ -248,17 +260,17 @@ kubectl logs $(kubectl get pod -l app=mihoyo -o jsonpath="{.items[0].metadata.na
 ```text
 名称：米游社签到
 类型：公开仓库
-链接：https://github.com/Womsxd/MihoyoBBSTools.git
+链接：https://github.com/2463741024/MihoyoBBSTools.git
 定时类型：crontab
 定时规则：2 2 28 * *
 白名单：ql_main.py
-依赖文件：error|mihoyo|log|push|req|set|tools|con|acc|captcha|main|gamecheckin|hoyo_checkin|competition|cloudgames|os_cloudgames|web_activity
+依赖文件：error|mihoyo|log|push|req|set|tools|con|acc|captcha|main|gamecheckin|hoyo_checkin|cloudgames|os_cloudgames|web_activity
 ```
 
 方式 2：指令拉取
 
 ```sh
-ql repo https://github.com/Womsxd/MihoyoBBSTools.git "ql_main.py" "" "error|mihoyo|log|push|req|set|tools|con|acc|captcha|main|gamecheckin|hoyo_checkin|competition|cloudgames|os_cloudgames|web_activity"
+ql repo https://github.com/2463741024/MihoyoBBSTools.git "ql_main.py" "" "error|mihoyo|log|push|req|set|tools|con|acc|captcha|main|gamecheckin|hoyo_checkin|cloudgames|os_cloudgames|web_activity"
 ```
 
 ### 2.环境变量添加
@@ -276,7 +288,13 @@ ql repo https://github.com/Womsxd/MihoyoBBSTools.git "ql_main.py" "" "error|miho
 
 **注意！仅多用户需添加变量```AutoMihoyoBBS_config_multi```**
 
-`AutoMihoyoBBS_push_path`和`AutoMihoyoBBS_push_name`在青龙里面仅在启用项目自带的推送后才生效
+`AutoMihoyoBBS_push_path`和`AutoMihoyoBBS_push_name`在青龙里面仅在启用项目自带的推送后才生效。`AutoMihoyoBBS_push_name` 填写 `push` 或 `push.ini` 均可，脚本会自动补全 `.ini` 后缀。
+
+补充说明：
+
+- 多用户未设置 `AutoMihoyoBBS_config_prefix` 时，默认只读取 `mhy_` 开头的配置文件。
+- 配置文件只读时，Cookie/配置版本更新会跳过保存，不影响本次签到任务。
+- 青龙镜像缺少 `notify` 模块时，脚本会尝试项目推送；项目推送失败会回退青龙通知，两者都不可用时只记录日志，不会直接退出。
 
 ### 3.复制配置文件
 
@@ -285,18 +303,18 @@ ql repo https://github.com/Womsxd/MihoyoBBSTools.git "ql_main.py" "" "error|miho
 单用户请使用以下命令复制配置文件
 
 ```sh
-cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/config/config.yaml
+cp /ql/data/repo/2463741024_MihoyoBBSTools/config/config.yaml.example /ql/data/config/config.yaml
 ```
 
 多用户需要注意，配置文件的名字必须以```mhy_```开头，之后的```[config*]```可以为任意字符
 或通过环境变量```AutoMihoyoBBS_config_prefix```来自定义开头，如果不配置则默认```mhy_```开头
 
 ```sh
-cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config1].yaml
-cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config2].yaml
-cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config3].yaml
+cp /ql/data/repo/2463741024_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config1].yaml
+cp /ql/data/repo/2463741024_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config2].yaml
+cp /ql/data/repo/2463741024_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config3].yaml
 ……
-cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config*].yaml
+cp /ql/data/repo/2463741024_MihoyoBBSTools/config/config.yaml.example /ql/data/config/mhy_[config*].yaml
 ```
 
 ### 4.添加依赖
@@ -309,7 +327,7 @@ cp /ql/data/repo/Womsxd_MihoyoBBSTools/config/config.yaml.example /ql/data/confi
 
 多用户在配置文件内 mhy_[config*].yaml 中编辑信息
 
-***注：通知配置为青龙 config.sh 中配置**
+***注：默认使用青龙 `config.sh` 中的通知配置；设置 `AutoMihoyoBBS_push_project=1` 可改用项目自带推送，失败时会回退青龙通知。**
 
 ## 使用 Nix Home Manager 运行
 
@@ -324,7 +342,7 @@ Home Manager 支持 Linux 和 macOS 系统。
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
-    mihoyo-bbs-tools.url = "github:https://github.com/Womsxd/MihoyoBBSTools";
+    mihoyo-bbs-tools.url = "github:2463741024/MihoyoBBSTools";
   };
 
   outputs = inputs@{ nixpkgs, home-manager, ... }: {
@@ -350,7 +368,7 @@ Home Manager 支持 Linux 和 macOS 系统。
                   # 多用户请自行添加更多项
                   settings.config = {
                     enable = true;
-                    version = 13;
+                    version = 15;
                     push = "";
                     account = {
                       cookie = "<你的 Cookie>";
@@ -362,6 +380,7 @@ Home Manager 支持 Linux 和 macOS 系统。
                       name = "Xiaomi MI 6";
                       model = "Mi 6";
                       id = "";
+                      fp = "";
                     };
                     # 关闭 bbs
                     mihoyobbs.enable = false;
@@ -388,7 +407,6 @@ Home Manager 支持 Linux 和 macOS 系统。
                       cn.enable = false;
                       os.enable = false;
                     };
-                    competition.enable = false;
                   };
                   # 定时器时间
                   # 默认为 09:30
@@ -415,7 +433,7 @@ Home Manager 支持 Linux 和 macOS 系统。
 2. 点击左下角齿轮图标，在“创建新实例”一栏选择从远程创建，填写以下内容并点击创建：
    - 实例名称：随意
    - 模板名称：随意
-   - 仓库地址：`https://github.com/Womsxd/MihoyoBBSTools`
+   - 仓库地址：`https://github.com/2463741024/MihoyoBBSTools`
    - 本地路径：`repos`
    - 分支：留空不填
    - 模板路径：`.`
@@ -428,15 +446,11 @@ Home Manager 支持 Linux 和 macOS 系统。
 
 ## 使用的第三方库
 
-~~requests~~: [GitHub](https://github.com/psf/requests) [pypi](https://pypi.org/project/requests/)
-
-requests仅作为在httpx无法使用时的备用选择，可能未来版本会进行移除
-
-httpx: [GitHub](https://github.com/encode/httpx) [pypi](https://pypi.org/project/httpx/)
-
-crontab: [GitHub](https://github.com/josiahcarlson/parse-crontab) [pypi](https://pypi.org/project/crontab/)
-
-PyYAML: [GitHub](https://github.com/yaml/pyyaml) [pypi](https://pypi.org/project/PyYAML/)
+- [httpx](https://github.com/encode/httpx)：主要 HTTP 客户端，带超时与重试
+- [PyYAML](https://github.com/yaml/pyyaml)：配置文件解析
+- [crontab](https://github.com/josiahcarlson/parse-crontab)：Docker 定时任务解析
+- [requests](https://github.com/psf/requests)：仅作为 httpx 不可用时的备用选择，可能在未来版本移除
+- 青龙 `notify`：由青龙面板提供，用于发送面板通知；缺少时脚本会自动降级
 
 ## 关于使用 Github Actions 运行
 
@@ -450,7 +464,7 @@ PyYAML: [GitHub](https://github.com/yaml/pyyaml) [pypi](https://pypi.org/project
 
 ## License
 
-[MIT License](https://github.com/Womsxd/MihoyoBBSTools/blob/master/LICENSE)
+[MIT License](https://github.com/2463741024/MihoyoBBSTools/blob/master/LICENSE)
 
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FWomsxd%2FMihoyoBBSTools.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FWomsxd%2FMihoyoBBSTools?ref=badge_large)
 

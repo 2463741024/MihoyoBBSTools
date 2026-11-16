@@ -132,7 +132,9 @@ def zzz():
     return ret_msg
 
 
-def run_task():
+def run_task(errors: list = None):
+    if errors is None:
+        errors = []
     ret_msg = ''
     games = config.config['games']['os']
 
@@ -151,5 +153,6 @@ def run_task():
             except Exception as e:
                 log.error(f"国际服 {game} 签到异常：{e}")
                 ret_msg += f"\n\n{game}：签到异常"
+                errors.append(f"国际服 {game}：{type(e).__name__}: {e}")
 
     return ret_msg

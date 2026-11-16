@@ -44,11 +44,18 @@ class CloudGenshin:
         return ret_msg
 
 
-def run_task() -> str:
+def run_task(errors: list = None) -> str:
+    if errors is None:
+        errors = []
     ret_msg = ""
     cg_os = config.config['cloud_games']['os']
     if not cg_os['genshin']['enable'] or cg_os['genshin']['token'] == "":
         return ""
     cg_genshin = CloudGenshin(cg_os['genshin']['token'], cg_os['lang'])
-    ret_msg += cg_genshin.sign_account() + "\n\n"
+    try:
+        ret_msg += cg_genshin.sign_account() + "\n\n"
+    except Exception as e:
+        log.exception("国际服云原神签到出现异常")
+        ret_msg += f"云原神：签到异常（{type(e).__name__}: {e}）\n\n"
+        errors.append(f"国际服云原神：{type(e).__name__}: {e}")
     return ret_msg

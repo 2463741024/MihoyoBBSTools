@@ -65,7 +65,8 @@ if os.getenv("AutoMihoyoBBS_config_path") is not None:
     path = os.getenv("AutoMihoyoBBS_config_path")
 config_prefix = os.getenv("AutoMihoyoBBS_config_prefix")
 if config_prefix is None:
-    config_prefix = ""
+    # 多用户模式下默认使用 mhy_ 前缀，与青龙面板文档保持一致
+    config_prefix = "mhy_" if os.getenv("AutoMihoyoBBS_config_multi") == "1" else ""
 config_Path = f"{path}/{config_prefix}config.yaml"
 
 
@@ -203,17 +204,17 @@ def save_config(p_path=None, p_config=None):
         p_path = config_Path
     if not p_config:
         p_config = config
-    with open(p_path, "w+", encoding='utf-8') as f:
-        try:
+    try:
+        with open(p_path, "w+", encoding='utf-8') as f:
             f.seek(0)
             f.truncate()
             f.write(yaml.dump(p_config, Dumper=yaml.Dumper, sort_keys=False, allow_unicode=True))
             f.flush()
-        except OSError:
-            serverless = True
-            log.info("Cookie 保存失败")
-        else:
-            log.info("Config 保存完毕")
+    except OSError:
+        serverless = True
+        log.info("配置保存失败，配置文件可能为只读")
+    else:
+        log.info("Config 保存完毕")
 
 
 def clear_stoken():

@@ -255,7 +255,9 @@ def checkin_game(game_name, game_module, game_print_name=""):
     return ''
 
 
-def run_task():
+def run_task(errors: list = None):
+    if errors is None:
+        errors = []
     games = [
         ("崩坏学园2", "honkai2", Honkai2),
         ("崩坏3rd", "honkai3rd", Honkai3rd),
@@ -266,5 +268,18 @@ def run_task():
     ]
     return_data = ''
     for game_print_name, game_name, game_module in games:
-        return_data += checkin_game(game_name, game_module, game_print_name)
+        try:
+            return_data += checkin_game(game_name, game_module, game_print_name)
+        except CookieError as e:
+            detail = getattr(e, 'info', e)
+            log.error(f"「{game_print_name}」签到失败：{detail}")
+            return_data += f"\n\n{game_print_name}：Cookie 异常，签到失败"
+            errors.append(f"{game_print_name}：Cookie 异常（{detail}）")
+            if not config.config["games"]["cn"].get("enable", False):
+                log.warning("国服游戏签到已关闭，停止后续游戏签到")
+                break
+        except Exception as e:
+            log.exception(f"「{game_print_name}」签到出现异常")
+            return_data += f"\n\n{game_print_name}：签到异常（{type(e).__name__}: {e}）"
+            errors.append(f"{game_print_name}：{type(e).__name__}: {e}")
     return return_data

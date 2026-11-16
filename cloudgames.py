@@ -16,7 +16,7 @@ class CloudGameBase:
         self.coin_name = coin_name
         self.clear_cookie_func = clear_cookie_func
 
-    def sign_account(self) -> str:
+    def sign_account(self, errors: list = None) -> str:
         log.info(f"{self.game_name}:")
         ret_msg = f"{self.game_name}:\r\n"
         
@@ -57,7 +57,9 @@ class CloudGameBase:
         except Exception as e:
             log.error(f'{self.game_name} 签到异常：{str(e)}')
             ret_msg += '脚本签到发生异常，请查看日志'
-        
+            if errors is not None:
+                errors.append(f"{self.game_name}：{type(e).__name__}: {e}")
+
         return ret_msg
 
 
@@ -88,7 +90,9 @@ class CloudZZZ(CloudGameBase):
         }
 
 
-def run_task() -> str:
+def run_task(errors: list = None) -> str:
+    if errors is None:
+        errors = []
     ret_msg = ""
     cg_cn = config.config['cloud_games']['cn']
     if not cg_cn['enable']:
@@ -96,11 +100,11 @@ def run_task() -> str:
     # 云原神签到
     if cg_cn['genshin']['enable'] and cg_cn['genshin']['token'] != "":
         cg_genshin = CloudGenshin(cg_cn['genshin']['token'])
-        ret_msg += cg_genshin.sign_account() + "\n\n"
+        ret_msg += cg_genshin.sign_account(errors) + "\n\n"
     # 云绝区零签到
     if cg_cn['zzz']['enable'] and cg_cn['zzz']['token'] != "":
         cg_zzz = CloudZZZ(cg_cn['zzz']['token'])
-        ret_msg += cg_zzz.sign_account() + "\n\n"
+        ret_msg += cg_zzz.sign_account(errors) + "\n\n"
     return ret_msg
 
 
