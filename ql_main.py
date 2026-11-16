@@ -39,9 +39,9 @@ def ql_push(status_code, title, message):
 try:
     from main import main
     from main_multi import main_multi
-except (ImportError, NameError) as e:
-    ql_push(-99, "「米游社脚本」依赖缺失", f"依赖缺失：{e}，请更新青龙拉取范围")
-    print("依赖缺失", e)
+except Exception as e:
+    ql_push(-99, "「米游社脚本」依赖缺失", f"脚本加载失败：{e}，请检查依赖和青龙拉取范围")
+    print("脚本加载失败", e)
     exit(-1)
 
 

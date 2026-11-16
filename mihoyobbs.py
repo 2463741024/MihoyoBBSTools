@@ -308,8 +308,18 @@ class Mihoyobbs:
                 wait()
                 self.refresh_list()
             if self.bbs_config["checkin"]:
-                self.signing()
-            self.post_task()
+                try:
+                    self.signing()
+                except StokenError:
+                    raise
+                except Exception:
+                    log.exception("米游社签到出现异常，继续执行帖子任务")
+            try:
+                self.post_task()
+            except StokenError:
+                raise
+            except Exception:
+                log.exception("米游社帖子任务出现异常，继续更新任务状态")
             self.get_tasks_list()
             i += 1
         return_data += "\n" + f"今天已经获得 {self.today_have_get_coins} 个米游币\n" \

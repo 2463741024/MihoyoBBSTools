@@ -9,7 +9,7 @@ import hashlib
 from datetime import datetime, timezone, timedelta
 from request import get_new_session, get_new_session_use_proxy
 from loghelper import log
-from configparser import ConfigParser, NoOptionError, NoSectionError
+from configparser import ConfigParser, NoOptionError, NoSectionError, Error as ConfigParserError
 
 title = {
     -99: "「米游社签到」依赖缺失",
@@ -52,8 +52,12 @@ class PushHandler:
 
     def load_config(self):
         file_path = self.get_config_path()
-        if os.path.exists(file_path):
-            self.cfg.read(file_path, encoding='utf-8')
+        if os.path.isfile(file_path):
+            try:
+                self.cfg.read(file_path, encoding='utf-8')
+            except (OSError, ConfigParserError) as e:
+                log.warning(f"配置文件读取失败：{file_path}：{e}")
+                return False
             return True
         else:
             default_path = os.path.join(self.config_path, "push.ini")
@@ -529,12 +533,19 @@ class PushHandler:
     def push(self, status, push_message):
         if not self.load_config():
             return 1
-        if not self.cfg.getboolean('setting', 'enable'):
+        if not self.cfg.has_section('setting'):
+            log.warning("push.ini 缺少 [setting] 配置")
+            return 1
+        if not self.cfg.getboolean('setting', 'enable', fallback=False):
             return 0
         if self.cfg.getboolean('setting', 'error_push_only', fallback=False) and status == 0:
             return 0
+        try:
+            func_names = self.cfg.get('setting', 'push_server').lower()
+        except (NoSectionError, NoOptionError):
+            log.warning("push.ini 缺少 push_server 配置")
+            return 1
         log.info("正在执行推送......")
-        func_names = self.cfg.get('setting', 'push_server').lower()
         push_success = True
         for func_name in func_names.split(","):
             func = getattr(self, func_name, None)

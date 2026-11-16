@@ -83,10 +83,14 @@ def merge_default_config(defaults: dict, data: dict) -> dict:
         if value is None:
             # 配置项留空时回退到默认值，避免后续代码对 None 做迭代/取值
             continue
-        if key in merged and isinstance(merged[key], dict) and isinstance(value, dict):
-            merged[key] = merge_default_config(merged[key], value)
-        else:
-            merged[key] = deepcopy(value)
+        if key in merged and isinstance(merged[key], dict):
+            if isinstance(value, dict):
+                merged[key] = merge_default_config(merged[key], value)
+            else:
+                # 默认值是字典但配置项类型错误时保留默认值，避免后续取值崩溃
+                log.warning(f"配置项 {key} 类型错误，已使用默认值")
+            continue
+        merged[key] = deepcopy(value)
     return merged
 
 

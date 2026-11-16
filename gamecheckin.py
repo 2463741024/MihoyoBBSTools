@@ -135,7 +135,7 @@ class GameCheckin:
                 break
         return result
 
-    def sign_account(self) -> str:
+    def sign_account(self, errors: list = None) -> str:
         return_data = f"{self.game_name}: "
         if not self.account_list:
             log.warning(f"账号没有绑定任何{self.game_name}账号！")
@@ -143,50 +143,59 @@ class GameCheckin:
             return return_data
         black_list = {str(uid) for uid in (config.config["games"]["cn"][self.game_mid].get("black_list") or [])}
         for account in self.account_list:
-            if str(account[1]) in black_list:
-                continue
-            log.info(f"正在为{self.player_name}「{account[0]}」进行签到...")
-            time.sleep(random.randint(2, 8))
-            is_data = self.is_sign(region=account[2], uid=account[1])
-            if is_data.get("first_bind", False):
-                log.warning(f"{self.player_name}「{account[0]}」是第一次绑定米游社，请先手动签到一次")
-                continue
-            sign_days = is_data.get("total_sign_day", 1) - 1
-            if is_data.get("is_sign"):
-                log.info(f"{self.player_name}「{account[0]}」今天已经签到过了~\r\n今天获得的奖"
-                         f"励是{self.get_reward_text(sign_days)}")
-                sign_days += 1
-            else:
+            account_name = account[0] if isinstance(account, (list, tuple)) and account else "未知账号"
+            try:
+                if str(account[1]) in black_list:
+                    continue
+                log.info(f"正在为{self.player_name}「{account_name}」进行签到...")
                 time.sleep(random.randint(2, 8))
-                req = self.check_in(account)
-                if req is None:
-                    log.warning("签到失败！")
-                    return_data += f"\n{account[0]}，本次签到失败"
+                is_data = self.is_sign(region=account[2], uid=account[1])
+                if is_data.get("first_bind", False):
+                    log.warning(f"{self.player_name}「{account_name}」是第一次绑定米游社，请先手动签到一次")
                     continue
-                if req.status_code != 429:
-                    data = req.json()
-                    if data.get("retcode") == 0 and (data.get("data") or {}).get("success") == 0:
-                        log.info(
-                            f"{self.player_name}「{account[0]}」签到成功~\r\n今天获得的奖励是"
-                            f"{self.get_reward_text(0 if sign_days == 0 else sign_days + 1)}")
-                        sign_days += 2
-                    elif data.get("retcode") == -5003:
-                        log.info(
-                            f"{self.player_name}{account[0]}今天已经签到过了~\r\n今天获得的奖励是"
-                            f"{self.get_reward_text(sign_days)}")
-                    else:
-                        s = "账号签到失败！"
-                        resp_data = data.get("data")
-                        if isinstance(resp_data, dict) and resp_data.get("success", -1):
-                            s += "原因：验证码\njson 信息：" + req.text
-                        log.warning(s)
-                        return_data += f"\n{account[0]}，触发验证码，本次签到失败"
-                        continue
+                sign_days = is_data.get("total_sign_day", 1) - 1
+                if is_data.get("is_sign"):
+                    log.info(f"{self.player_name}「{account_name}」今天已经签到过了~\r\n今天获得的奖"
+                             f"励是{self.get_reward_text(sign_days)}")
+                    sign_days += 1
                 else:
-                    return_data += f"\n{account[0]}，本次签到失败"
-                    continue
-            return_data += f"\n{account[0]}已连续签到{sign_days}天\n" \
-                           f"今天获得的奖励是{self.get_reward_text(sign_days - 1)}"
+                    time.sleep(random.randint(2, 8))
+                    req = self.check_in(account)
+                    if req is None:
+                        log.warning("签到失败！")
+                        return_data += f"\n{account_name}，本次签到失败"
+                        continue
+                    if req.status_code != 429:
+                        data = req.json()
+                        if data.get("retcode") == 0 and (data.get("data") or {}).get("success") == 0:
+                            log.info(
+                                f"{self.player_name}「{account_name}」签到成功~\r\n今天获得的奖励是"
+                                f"{self.get_reward_text(0 if sign_days == 0 else sign_days + 1)}")
+                            sign_days += 2
+                        elif data.get("retcode") == -5003:
+                            log.info(
+                                f"{self.player_name}{account_name}今天已经签到过了~\r\n今天获得的奖励是"
+                                f"{self.get_reward_text(sign_days)}")
+                        else:
+                            s = "账号签到失败！"
+                            resp_data = data.get("data")
+                            if isinstance(resp_data, dict) and resp_data.get("success", -1):
+                                s += "原因：验证码\njson 信息：" + req.text
+                            log.warning(s)
+                            return_data += f"\n{account_name}，触发验证码，本次签到失败"
+                            continue
+                    else:
+                        return_data += f"\n{account_name}，本次签到失败"
+                        continue
+                return_data += f"\n{account_name}已连续签到{sign_days}天\n" \
+                               f"今天获得的奖励是{self.get_reward_text(sign_days - 1)}"
+            except Exception as e:
+                detail = getattr(e, "info", e)
+                log.exception(f"{self.player_name}「{account_name}」签到出现异常")
+                return_data += f"\n{account_name}，签到异常（{type(e).__name__}: {detail}）"
+                if errors is not None:
+                    errors.append(f"{self.game_name}「{account_name}」：{type(e).__name__}: {detail}")
+                continue
         return return_data
 
 
@@ -243,14 +252,14 @@ class ZZZ(GameCheckin):
         self.init()
 
 
-def checkin_game(game_name, game_module, game_print_name=""):
+def checkin_game(game_name, game_module, game_print_name="", errors=None):
     game_config = config.config["games"]["cn"][game_name]
     if game_config["checkin"]:
         time.sleep(random.randint(2, 8))
         if game_print_name == "":
             game_print_name = game_name
         log.info(f"正在进行「{game_print_name}」签到")
-        return_data = f"\n\n{game_module().sign_account()}"
+        return_data = f"\n\n{game_module().sign_account(errors)}"
         return return_data
     return ''
 
@@ -269,7 +278,7 @@ def run_task(errors: list = None):
     return_data = ''
     for game_print_name, game_name, game_module in games:
         try:
-            return_data += checkin_game(game_name, game_module, game_print_name)
+            return_data += checkin_game(game_name, game_module, game_print_name, errors)
         except CookieError as e:
             detail = getattr(e, 'info', e)
             log.error(f"「{game_print_name}」签到失败：{detail}")

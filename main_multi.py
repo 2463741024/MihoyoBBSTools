@@ -71,6 +71,16 @@ def get_config_list() -> list:
     return config_list
 
 
+def push_user_error(config_name: str, message: str) -> None:
+    """发送单个配置的错误推送，推送失败不影响其他配置"""
+    if not config.config.get("push", ""):
+        return
+    try:
+        push.PushHandler(config.config["push"]).push(1, message)
+    except Exception:
+        log.exception(f"{config_name} 错误通知发送失败")
+
+
 def main_multi(autorun: bool) -> tuple:
     """
     多用户模式主执行函数
@@ -119,16 +129,14 @@ def main_multi(autorun: bool) -> tuple:
             else:
                 error_msg = f"配置文件有误：{e}"
             error_details.append(f"{i}：{error_msg}")
-            if config.config.get("push", "") != "":
-                push.PushHandler(config.config["push"]).push(1, error_msg)
+            push_user_error(i, error_msg)
         except Exception as e:
             # 单个配置的未预期异常不应中断其他配置的执行
             results["error"].append(i)
             error_msg = f"{type(e).__name__}: {e}"
             error_details.append(f"{i}：{error_msg}")
             log.exception(f"{i} 执行出现未预期错误")
-            if config.config.get("push", "") != "":
-                push.PushHandler(config.config["push"]).push(1, error_msg)
+            push_user_error(i, error_msg)
         else:
             # 增强对返回值的处理，确保所有可能的情况都被考虑到
             if run_code == 0:
