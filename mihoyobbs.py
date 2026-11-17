@@ -294,7 +294,7 @@ class Mihoyobbs:
                 self.task_do["share"] = True
                 wait()
 
-    def run_task(self):
+    def run_task(self, errors: list = None):
         return_data = "米游社: "
         if self.task_do["sign"] and self.task_do["read"] and self.task_do["like"] and \
                 self.task_do["share"]:
@@ -312,14 +312,18 @@ class Mihoyobbs:
                     self.signing()
                 except StokenError:
                     raise
-                except Exception:
+                except Exception as e:
                     log.exception("米游社签到出现异常，继续执行帖子任务")
+                    if errors is not None:
+                        errors.append(f"米游社签到：{type(e).__name__}: {getattr(e, 'info', e)}")
             try:
                 self.post_task()
             except StokenError:
                 raise
-            except Exception:
+            except Exception as e:
                 log.exception("米游社帖子任务出现异常，继续更新任务状态")
+                if errors is not None:
+                    errors.append(f"米游社帖子任务：{type(e).__name__}: {getattr(e, 'info', e)}")
             self.get_tasks_list()
             i += 1
         return_data += "\n" + f"今天已经获得 {self.today_have_get_coins} 个米游币\n" \
