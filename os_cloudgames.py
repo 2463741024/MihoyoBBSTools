@@ -7,22 +7,22 @@ from request import get_new_session
 
 class CloudGenshin:
     def __init__(self, token, lang) -> None:
-        self.http = get_new_session()
         self.headers = {
             'Accept': '*/*',
             'x-rpc-combo_token': token,
             'Accept-Encoding': 'gzip, deflate',
             'User-Agent': 'okhttp/4.10.0',
-            'x-rpc-client_type': 3,
+            'x-rpc-client_type': '3',
             'x-rpc-cg_game_biz': 'hk4e_global',
-            'x-rpc-channel_id': 1,
+            'x-rpc-channel_id': '1',
             'x-rpc-language': lang
 
         }
 
     def sign_account(self) -> str:
         ret_msg = "云原神:\r\n"
-        req = self.http.get(url=setting.cloud_genshin_sgin_os, headers=self.headers)
+        with get_new_session() as http:
+            req = http.get(url=setting.cloud_genshin_sgin_os, headers=self.headers)
         data = req.json()
         if data['retcode'] == 0:
             if int(data["data"]["free_time"]["send_freetime"]) > 0:
@@ -35,12 +35,10 @@ class CloudGenshin:
                        f'畅玩卡状态为 {data["data"]["play_card"]["short_msg"]}，拥有米云币 {data["data"]["coin"]["coin_num"]} 枚'
             log.info(ret_msg)
         elif data['retcode'] == -100:
-            ret_msg = "云原神 token 失效"
-            log.warning(ret_msg)
             config.clear_cookie_cloudgame_genshin_os()
+            raise RuntimeError("云原神 token 失效")
         else:
-            ret_msg = f'脚本签到失败，json 文本：{req.text}'
-            log.warning(ret_msg)
+            raise RuntimeError(f"云原神签到失败（retcode={data['retcode']}）")
         return ret_msg
 
 

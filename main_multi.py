@@ -9,22 +9,15 @@ from loghelper import log
 from error import CookieError, StokenError, ConfigError
 
 
-def find_config(ext: str) -> list:
-    """
-    搜索指定扩展名的配置文件
-    
-    Args:
-        ext (str): 文件扩展名，如 '.yaml' 或 '.yml'
-    
-    Returns:
-        list: 符合条件的配置文件名列表
-    """
-    file_name = []
-    for files in sorted(os.listdir(config.path)):
-        if os.path.splitext(files)[1] == ext:
-            if config.config_prefix == "" or files.startswith(config.config_prefix):
-                file_name.append(files)
-    return file_name
+def find_config(*extensions: str) -> list:
+    """按文件名顺序返回指定扩展名的配置文件。"""
+    with os.scandir(config.path) as entries:
+        return sorted(
+            entry.name for entry in entries
+            if entry.name.startswith(config.config_prefix)
+            and os.path.splitext(entry.name)[1] in extensions
+            and entry.is_file()
+        )
 
 
 def ql_config(config_list: list) -> list:
@@ -55,8 +48,7 @@ def get_config_list() -> list:
     Returns:
         list: 配置文件列表
     """
-    config_list = find_config('.yaml')
-    config_list.extend(find_config('.yml'))
+    config_list = find_config('.yaml', '.yml')
     # 增强环境变量处理，添加更多的错误处理和默认值
     config_prefix = os.getenv("AutoMihoyoBBS_config_prefix")
     config_multi = os.getenv("AutoMihoyoBBS_config_multi", "0")
@@ -100,6 +92,7 @@ def main_multi(autorun: bool) -> tuple:
     """
     log.info("AutoMihoyoBBS Multi User mode")
     log.info("正在搜索配置文件！")
+    config.update_config_need = False
     try:
         config_list = get_config_list()
     except (ConfigError, OSError) as e:
@@ -113,64 +106,61 @@ def main_multi(autorun: bool) -> tuple:
             input("请输入回车继续，需要重新搜索配置文件请 Ctrl+C 退出脚本")
         except KeyboardInterrupt:
             exit(0)
+    original_path, original_config = config.config_Path, config.config
+    update_needed = False
     results = {"ok": [], "close": [], "error": [], "captcha": []}
     error_details = []
-    for i in config_list:
-        log.info(f"正在执行 {i}")
-        config.config_Path = os.path.join(config.path, i)
-        try:
-            run_code, run_message = main.main()
-        except (CookieError, StokenError, ConfigError) as e:
-            results["error"].append(i)
-            if isinstance(e, CookieError):
-                error_msg = "账号 Cookie 出错！"
-            elif isinstance(e, StokenError):
-                error_msg = "账号 Stoken 有问题！"
-            else:
-                error_msg = f"配置文件有误：{e}"
-            error_details.append(f"{i}：{error_msg}")
-            push_user_error(i, error_msg)
-        except Exception as e:
-            # 单个配置的未预期异常不应中断其他配置的执行
-            results["error"].append(i)
-            error_msg = f"{type(e).__name__}: {e}"
-            error_details.append(f"{i}：{error_msg}")
-            log.exception(f"{i} 执行出现未预期错误")
-            push_user_error(i, error_msg)
-        else:
-            # 增强对返回值的处理，确保所有可能的情况都被考虑到
-            if run_code == 0:
-                results["ok"].append(i)
-            elif run_code == 1 or run_code == 2:
-                # 处理明确的失败状态，并保留具体错误信息用于汇总推送
-                results["error"].append(i)
-                error_details.append(f"{i}：\n{run_message}")
-            elif run_code == 3:
-                results["captcha"].append(i)
-            else:
-                # 其他未知状态归类为未执行
-                results["close"].append(i)
-        log.info(f"{i} 执行完毕")
-        
-        time.sleep(random.randint(3, 10))
+    try:
+        for index, name in enumerate(config_list):
+            run_config(name, results, error_details)
+            update_needed |= config.update_config_need
+            if index < len(config_list) - 1:
+                time.sleep(random.randint(3, 10))
+    finally:
+        config.config_Path = original_path
+        config.config = original_config
+        config.update_config_need = update_needed
+
     print("")
     push_message = f'脚本执行完毕，共执行{len(config_list)}个配置文件，成功{len(results["ok"])}个，' \
-                   f'没执行{len(results["close"])}个，失败{len(results["error"])}个' \
+                   f'没执行{len(results["close"])}个，失败{len(results["error"])}个，' \
+                   f'触发验证码{len(results["captcha"])}个' \
                    f'\r\n没执行的配置文件：{results["close"]}\r\n执行失败的配置文件：{results["error"]}\r\n' \
                    f'触发游戏签到验证码的配置文件：{results["captcha"]}'
     if error_details:
         push_message += "\r\n\r\n失败详情：\r\n" + "\r\n\r\n".join(error_details)
     log.info(push_message)
-    # 更清晰的状态码逻辑
-    status = 0  # 默认成功
     if len(results["error"]) == len(config_list):
-        status = 1  # 全部失败
-    elif len(results["error"]) != 0:
-        status = 2  # 部分失败
-    elif len(results["captcha"]) != 0:
-        status = 3  # 有验证码触发
-    
-    return status, push_message
+        return 1, push_message
+    if results["error"]:
+        return 2, push_message
+    if results["captcha"]:
+        return 3, push_message
+    return 0, push_message
+
+
+def run_config(name, results, error_details):
+    log.info(f"正在执行 {name}")
+    config.config_Path = os.path.join(config.path, name)
+    try:
+        run_code, run_message = main.main()
+    except Exception as e:
+        if isinstance(e, CookieError):
+            message = "账号 Cookie 出错！"
+        elif isinstance(e, StokenError):
+            message = "账号 Stoken 有问题！"
+        elif isinstance(e, ConfigError):
+            message = f"配置文件有误：{e}"
+        else:
+            message = f"{type(e).__name__}: {e}"
+            log.exception(f"{name} 执行出现未预期错误")
+        push_user_error(name, message)
+        run_code, run_message = 1, message
+    if run_code in (1, 2):
+        error_details.append(f"{name}：\n{run_message}")
+    outcome = {0: "ok", 1: "error", 2: "error", 3: "captcha"}.get(run_code, "close")
+    results[outcome].append(name)
+    log.info(f"{name} 执行完毕")
 
 
 if __name__ == "__main__":

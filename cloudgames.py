@@ -48,12 +48,10 @@ class CloudGameBase:
                            f'畅玩卡状态为 {data["data"]["play_card"]["short_msg"]}，拥有{self.coin_name} {data["data"]["coin"]["coin_num"]} 枚'
                 log.info(ret_msg)
             elif data['retcode'] == -100:
-                ret_msg += f"token 失效/防沉迷"
-                log.warning(ret_msg)
                 self.clear_cookie_func()
+                raise RuntimeError("token 失效/防沉迷")
             else:
-                ret_msg += f'脚本签到失败，json 文本：{req.text}'
-                log.warning(ret_msg)
+                raise RuntimeError(f"签到失败（retcode={data['retcode']}）")
         except Exception as e:
             log.error(f'{self.game_name} 签到异常：{str(e)}')
             ret_msg += '脚本签到发生异常，请查看日志'

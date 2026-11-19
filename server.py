@@ -18,6 +18,7 @@ class ServerConfig:
         self.mod = 1  # 单用户模式/自动判断
         self.show_details = False  # 是否显示详细信息
         self.lock = threading.Lock()  # 线程锁
+        self.run_lock = threading.Lock()  # 定时任务和手动命令共用账号配置
         
     def set_time_interval(self, interval):
         """
@@ -200,21 +201,16 @@ class CommandHandler:
         """处理test命令"""
         log.info("Testing current configuration")
         if self.config.get_mod() == 1:
-            try:
-                single.main()
-            except Exception as e:
-                log.info(f"single_user start failed: {e}")
+            self._handle_single_command()
         else:
-            try:
-                multi.main_multi(True)
-            except Exception as e:
-                log.info(f"multi_user start failed: {e}")
-                
+            self._handle_multi_command()
+
     def _handle_single_command(self):
         """处理single命令"""
         log.info("Testing single user configuration")
         try:
-            single.main()
+            with self.config.run_lock:
+                single.main()
         except Exception as e:
             log.info(f"single_user start failed: {e}")
             
@@ -222,7 +218,8 @@ class CommandHandler:
         """处理multi命令"""
         log.info("Testing multi user configuration")
         try:
-            multi.main_multi(True)
+            with self.config.run_lock:
+                multi.main_multi(True)
         except Exception as e:
             log.info(f"multi_user start failed: {e}")
             
@@ -293,8 +290,9 @@ class CommandHandler:
             new_config = config.copy_config()
             new_config['account']['cookie'] = cookie
             file_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "config", f"{name}.yaml")
-            config.save_config(file_path, new_config)
-            log.info("Saving OK")
+            with self.config.run_lock:
+                if config.save_config(file_path, new_config):
+                    log.info("Saving OK")
         except Exception as e:
             log.info(f'Saving failed, please check your file system: {e}')
             
@@ -311,8 +309,6 @@ class CommandHandler:
             return
             
         try:
-            new_config = config.load_config(file_path)
-            
             # 转换值类型
             if value.lower() == "true":
                 value = True
@@ -321,9 +317,11 @@ class CommandHandler:
             elif value.isdigit():
                 value = int(value)
                 
-            new_config[attribute] = value
-            config.save_config(file_path, new_config)
-            log.info("Saving OK")
+            with self.config.run_lock:
+                new_config = config.load_config(file_path)
+                new_config[attribute] = value
+                if config.save_config(file_path, new_config):
+                    log.info("Saving OK")
         except Exception as e:
             log.info(f'Saving failed, please check your file system: {e}')
         
@@ -384,13 +382,15 @@ def control(config, stop_event):
             last_time = runningtime()
             if config.get_mod() == 1:
                 try:
-                    single.task_run()
+                    with config.run_lock:
+                        single.task_run()
                 except Exception as e:
                     log.info(f"single_user start failed: {e}")
             else:
                 try:
-                    status, push_message = multi.main_multi(True)
-                    push.push(status, push_message)
+                    with config.run_lock:
+                        status, push_message = multi.main_multi(True)
+                        push.push(status, push_message)
                 except Exception as e:
                     log.info(f"multi_user start failed: {e}")
         if stop_event.is_set():

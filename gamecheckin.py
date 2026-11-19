@@ -162,31 +162,20 @@ class GameCheckin:
                     time.sleep(random.randint(2, 8))
                     req = self.check_in(account)
                     if req is None:
-                        log.warning("签到失败！")
-                        return_data += f"\n{account_name}，本次签到失败"
+                        raise RuntimeError("签到请求未返回结果")
+                    if req.status_code >= 400:
+                        raise RuntimeError(f"签到请求失败（HTTP {req.status_code}）")
+                    data = req.json()
+                    retcode = data.get("retcode")
+                    success = (data.get("data") or {}).get("success")
+                    if retcode == 0 and success == 1:
+                        log.warning(f"{account_name} 触发验证码")
+                        return_data += f"\n{account_name}，触发验证码，本次签到失败"
                         continue
-                    if req.status_code != 429:
-                        data = req.json()
-                        if data.get("retcode") == 0 and (data.get("data") or {}).get("success") == 0:
-                            log.info(
-                                f"{self.player_name}「{account_name}」签到成功~\r\n今天获得的奖励是"
-                                f"{self.get_reward_text(0 if sign_days == 0 else sign_days + 1)}")
-                            sign_days += 2
-                        elif data.get("retcode") == -5003:
-                            log.info(
-                                f"{self.player_name}{account_name}今天已经签到过了~\r\n今天获得的奖励是"
-                                f"{self.get_reward_text(sign_days)}")
-                        else:
-                            s = "账号签到失败！"
-                            resp_data = data.get("data")
-                            if isinstance(resp_data, dict) and resp_data.get("success", -1):
-                                s += "原因：验证码\njson 信息：" + req.text
-                            log.warning(s)
-                            return_data += f"\n{account_name}，触发验证码，本次签到失败"
-                            continue
+                    if retcode == -5003 or (retcode == 0 and success == 0):
+                        sign_days += 2
                     else:
-                        return_data += f"\n{account_name}，本次签到失败"
-                        continue
+                        raise RuntimeError(f"签到失败（retcode={retcode}）")
                 return_data += f"\n{account_name}已连续签到{sign_days}天\n" \
                                f"今天获得的奖励是{self.get_reward_text(sign_days - 1)}"
             except Exception as e:

@@ -16,6 +16,7 @@ import web_activity
 import os_cloudgames
 from loghelper import log
 from error import CookieError, StokenError, ConfigError
+from request import http
 
 
 class StatusCode(Enum):
@@ -149,6 +150,7 @@ def main() -> Tuple[int, str]:
     global last_report
     report = RunReport()
     last_report = report
+    http.cookies.clear()
     try:
         return _main(report)
     except Exception as e:
@@ -156,6 +158,8 @@ def main() -> Tuple[int, str]:
         log.exception("主流程出现未预期错误")
         report.set("主流程", "failed", detail)
         return StatusCode.FAILURE.value, f"{report.render()}\n脚本执行出现未预期错误：{detail}"
+    finally:
+        http.cookies.clear()
 
 
 def _main(report: RunReport) -> Tuple[int, str]:

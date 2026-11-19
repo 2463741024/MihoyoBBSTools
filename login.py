@@ -7,6 +7,8 @@ from error import CookieError, StokenError
 from loghelper import log
 from request import http
 
+COOKIE_TOKEN = re.compile(r"(^|;)[ \t]*cookie_token=([^;]*)")
+
 headers = setting.headers.copy()
 headers.pop("DS")
 headers.pop("Origin")
@@ -67,10 +69,9 @@ def get_stoken(login_ticket: str, uid: str) -> str:
 
 
 def get_cookie_token_by_stoken():
-    if config.config["account"]["stoken"] == "" and config.config["account"]["stuid"] == "":
-        log.error("Stoken 和 Suid 为空，无法自动更新 CookieToken")
-        config.clear_cookie()
-        raise CookieError('Cookie expires')
+    account = config.config["account"]
+    if not account["stuid"] or account["stoken"] in ("", "StokenError"):
+        raise StokenError("缺少有效的 Stoken 或 Stuid，无法刷新 CookieToken")
     header = deepcopy(headers)
     header["cookie"] = get_stoken_cookie()
     data = http.get(url=setting.bbs_get_cookie_token_by_stoken,
@@ -84,15 +85,18 @@ def get_cookie_token_by_stoken():
 
 def update_cookie_token() -> bool:
     log.info("CookieToken 失效，尝试刷新")
-    old_token_match = re.search(r'cookie_token=(.*?)(?:;|$)', config.config["account"]["cookie"])
-    if old_token_match:
-        new_token = get_cookie_token_by_stoken()
-        log.info("CookieToken 刷新成功")
-        config.config["account"]["cookie"] = config.config["account"]["cookie"].replace(
-            old_token_match.group(1), new_token)
-        config.save_config()
-        return True
-    return False
+    account = config.config["account"]
+    cookie = account["cookie"]
+    old_token = COOKIE_TOKEN.search(cookie)
+    if old_token is None:
+        return False
+    new_token = get_cookie_token_by_stoken()
+    if not new_token:
+        return False
+    account["cookie"] = cookie[:old_token.start(2)] + new_token + cookie[old_token.end(2):]
+    config.save_config()
+    log.info("CookieToken 刷新成功")
+    return True
 
 
 def require_mid() -> bool:

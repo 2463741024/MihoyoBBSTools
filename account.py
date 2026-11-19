@@ -16,7 +16,6 @@ def get_account_list(game_id: str, headers: dict, update: bool = False) -> list:
 
     :return: 账号列表
     '''
-    http = get_new_session()
     game_name = setting.game_id2name.get(game_id, game_id)
 
     if update and login.update_cookie_token():
@@ -26,18 +25,19 @@ def get_account_list(game_id: str, headers: dict, update: bool = False) -> list:
         raise CookieError("BBS Cookie Error")
 
     log.info(f"正在获取米哈游账号绑定的「{game_name}」账号列表...")
-    response = http.get(setting.account_Info_url, params={"game_biz": game_id}, headers=headers)
-    data = response.json()
+    with get_new_session() as http:
+        data = http.get(setting.account_Info_url, params={"game_biz": game_id}, headers=headers).json()
     if data["retcode"] == -100:
+        if update:
+            raise CookieError("BBS Cookie Error")
         return get_account_list(game_id, headers, update=True)
 
     if data["retcode"] != 0:
-        log.warning(f"获取「{game_name}」账号列表失败！")
-        return []
+        raise RuntimeError(f"获取「{game_name}」账号列表失败（retcode={data['retcode']}）")
 
     account_list = []
     for i in data["data"]["list"]:
         account_list.append([i["nickname"], i["game_uid"], i["region"]])
 
-    log.info(f"已获取到 {len(account_list)} 个「{setting.game_id2name.get(game_id, game_id)}」账号信息")
+    log.info(f"已获取到 {len(account_list)} 个「{game_name}」账号信息")
     return account_list

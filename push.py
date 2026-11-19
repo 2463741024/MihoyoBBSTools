@@ -6,6 +6,7 @@ import base64
 import config
 import urllib
 import hashlib
+from contextlib import nullcontext
 from datetime import datetime, timezone, timedelta
 from request import get_new_session, get_new_session_use_proxy
 from loghelper import log
@@ -19,6 +20,12 @@ title = {
     1: "「米游社签到」执行失败!",
     2: "「米游社签到」部分账号执行失败！",
     3: "「米游社签到」社区/游戏道具签到触发验证码！"
+}
+
+PUSH_SERVICES = {
+    "telegram", "ftqq", "pushplus", "pushme", "cqhttp", "qbot", "smtp", "wecom",
+    "wecomrobot", "pushdeer", "dingrobot", "feishubot", "bark", "gotify", "ifttt",
+    "webhook", "qmsg", "discord", "wintoast", "wxpusher", "serverchan3",
 }
 
 
@@ -51,11 +58,13 @@ class PushHandler:
         return os.path.join(file_path, file_name)
 
     def load_config(self):
+        self.cfg = ConfigParser()
         file_path = self.get_config_path()
         if os.path.isfile(file_path):
             try:
-                self.cfg.read(file_path, encoding='utf-8')
-            except (OSError, ConfigParserError) as e:
+                with open(file_path, encoding='utf-8') as file:
+                    self.cfg.read_file(file)
+            except (OSError, UnicodeError, ConfigParserError) as e:
                 log.warning(f"配置文件读取失败：{file_path}：{e}")
                 return False
             return True
@@ -81,15 +90,20 @@ class PushHandler:
             return msg
 
     def telegram(self, status_id, push_message):
-        http_proxy = self.cfg.get('telegram', 'http_proxy', fallback=None)
-        session = get_new_session_use_proxy(http_proxy) if http_proxy else self.http
-        session.post(
-            url=f"https://{self.cfg.get('telegram', 'api_url')}/bot{self.cfg.get('telegram', 'bot_token')}/sendMessage",
-            data={
-                "chat_id": self.cfg.get('telegram', 'chat_id'),
-                "text": get_push_title(status_id) + "\r\n" + push_message
-            }
-        )
+        http_proxy = self.cfg.get('telegram', 'http_proxy', fallback='').strip()
+        client = get_new_session_use_proxy(http_proxy) if http_proxy else nullcontext(self.http)
+        with client as session:
+            response = session.post(
+                url=f"https://{self.cfg.get('telegram', 'api_url')}/bot{self.cfg.get('telegram', 'bot_token')}/sendMessage",
+                data={
+                    "chat_id": self.cfg.get('telegram', 'chat_id'),
+                    "text": get_push_title(status_id) + "\r\n" + push_message
+                }
+            )
+            if response.status_code != 200 or not response.json().get("ok"):
+                log.warning(f"Telegram 推送失败（HTTP {response.status_code}）")
+                return 1
+        return 0
 
     def ftqq(self, status_id, push_message):
         """
@@ -124,7 +138,7 @@ class PushHandler:
         pushme_key = self.cfg.get('pushme', 'token')
         if not pushme_key:
             log.error("PushMe 推送失败！PUSHME_KEY 未设置")
-            return
+            return 1
         log.info("PushMe 服务启动")
         data = {
             "push_key": pushme_key,
@@ -133,7 +147,6 @@ class PushHandler:
             "date": "",
             "type": ""
         }
-        log.debug(f"PushMe 请求数据: {data}")
         response = self.http.post(
             url=self.cfg.get('pushme', 'url', fallback="https://push.i-i.me/"),
             data=data)
@@ -143,6 +156,7 @@ class PushHandler:
             log.info("PushMe 推送成功！")
         else:
             log.error(f"PushMe 推送失败！{response.status_code} {response.text}")
+            return 1
 
     def cqhttp(self, status_id, push_message):
         """
@@ -153,7 +167,7 @@ class PushHandler:
 
         if qq and group:
             log.error("请只填写 cqhttp_qq 或 cqhttp_group 的其中一个，不要同时填写！")
-            return
+            return 1
 
         data = {
             "message": get_push_title(status_id) + "\r\n" + push_message
@@ -177,7 +191,7 @@ class PushHandler:
         openid = self.cfg.get('qbot', 'openid', fallback='').strip()
         if not appid or not secret or not openid:
             log.error("QQ机器人 推送失败！请检查 appid、secret、openid 配置")
-            return
+            return 1
 
         token_rep = self.http.post(
             url="https://api.bot.qq.com/app/getAppAccessToken",
@@ -185,8 +199,8 @@ class PushHandler:
         ).json()
         access_token = token_rep.get("access_token")
         if not access_token:
-            log.error(f"QQ机器人 获取 access_token 失败：{token_rep}")
-            return
+            log.error("QQ机器人 获取 access_token 失败")
+            return 1
 
         rep = self.http.post(
             url=f"https://api.bot.qq.com/v2/users/{openid}/messages",
@@ -200,11 +214,12 @@ class PushHandler:
             rep_json = rep.json()
         except ValueError:
             log.error(f"QQ机器人 推送失败！{rep.status_code} {rep.text}")
-            return
+            return 1
         if rep.status_code == 200 and rep_json.get("id"):
             log.info("QQ机器人 推送成功！")
         else:
             log.error(f"QQ机器人 推送失败！{rep.status_code} {rep.text}")
+            return 1
 
     # 感谢 @islandwind 提供的随机壁纸api 个人主页：https://space.bilibili.com/7600422
     def smtp(self, status_id, push_message):
@@ -398,12 +413,10 @@ class PushHandler:
                 "value2": push_message
             }
         )
-        if 'errors' in rep.text:
-            log.warning(f"推送执行错误：{rep.json()['errors']}")
-            return 0
-        else:
-            log.info("推送完毕......")
-        return 1
+        if rep.status_code >= 400 or 'errors' in rep.text:
+            log.warning(f"IFTTT 推送失败（HTTP {rep.status_code}）")
+            return 1
+        return 0
 
     def webhook(self, status_id, push_message):
         """
@@ -472,6 +485,7 @@ class PushHandler:
         )
         if rep.status_code != 204:
             log.warning(f"推送执行错误：{rep.text}")
+            return 1
         else:
             log.info(f"推送结果：HTTP {rep.status_code} Success")
 
@@ -479,8 +493,9 @@ class PushHandler:
         try:
             from win11toast import toast
             toast(app_id="MihoyoBBSTools", title=get_push_title(status_id), body=push_message, icon='')
-        except:
+        except ImportError:
             log.error("请先pip install win11toast再使用win通知")
+            return 1
 
     def wxpusher(self, status_id, push_message):
         """
@@ -488,7 +503,7 @@ class PushHandler:
         """
         try:
             from wxpusher import WxPusher
-        except:
+        except ImportError:
             log.error("WxPusher 模块未安装，请先执行pip install wxpusher")
             return 1
         app_token = self.cfg.get('wxpusher', 'app_token', fallback=None)
@@ -546,22 +561,25 @@ class PushHandler:
             log.warning("push.ini 缺少 push_server 配置")
             return 1
         log.info("正在执行推送......")
+        message = self.msg_replace(push_message)
+        if config.update_config_need:
+            message = ('如果您多次收到此消息开头的推送，证明您运行的环境无法自动更新config，请手动更新一下，谢谢\r\n'
+                       f'{title.get(status, "")}\r\n{message}')
+            status = -1
         push_success = True
-        for func_name in func_names.split(","):
-            func = getattr(self, func_name, None)
-            if not func:
+        for func_name in (name.strip() for name in func_names.split(",")):
+            if func_name not in PUSH_SERVICES:
                 log.warning(f"推送服务名称错误：{func_name}")
+                push_success = False
                 continue
             log.debug(f"推送所用的服务为: {func_name}")
             try:
-                if not config.update_config_need:
-                    func(status, self.msg_replace(push_message))
-                else:
-                    func(-1,
-                         f'如果您多次收到此消息开头的推送，证明您运行的环境无法自动更新config，请手动更新一下，谢谢\r\n'
-                         f'{title.get(status, "")}\r\n{self.msg_replace(push_message)}')
+                result = getattr(self, func_name)(status, message)
             except Exception as e:
-                log.warning(f"{func_name} 推送执行错误：{str(e)}")
+                log.warning(f"{func_name} 推送执行错误（{type(e).__name__}）")
+                push_success = False
+                continue
+            if result not in (None, 0):
                 push_success = False
                 continue
             log.info(f"{func_name} - 推送完毕......")

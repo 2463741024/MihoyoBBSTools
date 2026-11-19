@@ -1,4 +1,7 @@
 import os
+import stat
+import tempfile
+from pathlib import Path
 
 import yaml
 from copy import deepcopy
@@ -95,19 +98,12 @@ def merge_default_config(defaults: dict, data: dict) -> dict:
 
 
 def config_v11_update(data: dict):
-    global update_config_need
-    update_config_need = True
-    old_cloud_games = data.get('cloud_games') or {}
-    old_genshin = old_cloud_games.get('genshin') or {}
-    new_config = {}
-    for key in data:
-        if key == "account":
-            new_config["push"] = ""
-        if key == "cloud_games":
-            new_config['cloud_games'] = deepcopy(config_raw['cloud_games'])
-            continue
-        new_config[key] = deepcopy(data[key])
-    new_config.setdefault('cloud_games', deepcopy(config_raw['cloud_games']))
+    old_cloud_games = data.get('cloud_games')
+    old_genshin = old_cloud_games.get('genshin') if isinstance(old_cloud_games, dict) else None
+    if not isinstance(old_genshin, dict):
+        old_genshin = {}
+    new_config = deepcopy(data)
+    new_config['cloud_games'] = deepcopy(config_raw['cloud_games'])
     new_config['cloud_games']['cn']['enable'] = old_genshin.get('enable', False)
     new_config['cloud_games']['cn']['genshin']['enable'] = old_genshin.get('enable', False)
     new_config['cloud_games']['cn']['genshin']['token'] = old_genshin.get('token', "")
@@ -117,41 +113,27 @@ def config_v11_update(data: dict):
 
 
 def config_v12_update(data: dict):
-    global update_config_need
-    update_config_need = True
     data['version'] = 13
-    cloud_games = data.setdefault('cloud_games', deepcopy(config_raw['cloud_games']))
-    cloud_games.setdefault('cn', deepcopy(config_raw['cloud_games']['cn']))
-    cloud_games['cn'].setdefault('zzz', {'enable': False, 'token': ""})
     log.info("config 已升级到: 13")
     return data
 
 
 def config_v13_update(data: dict):
-    global update_config_need
-    update_config_need = True
-    new_config = deepcopy(data)
-
-    # 确保版本号更新为14
-    new_config['version'] = 14
-    new_config.setdefault('device', {}).setdefault('fp', '')
-
+    data['version'] = 14
     log.info("config 已升级到：14")
-    return new_config
+    return data
 
 
 def update_v14_update(data: dict):
-    global update_config_need
-    update_config_need = True
-    new_config = deepcopy(data)
-    new_config['version'] = 15
-    new_config.setdefault('web_activity', {'enable': False, 'activities': []})
+    data['version'] = 15
     log.info("config 已升级到：15")
-    return new_config
+    return data
 
 
 def load_config(p_path=None):
     global config, update_config_need
+    config = copy_config()
+    update_config_need = False
     if not p_path:
         p_path = config_Path
     try:
@@ -161,7 +143,7 @@ def load_config(p_path=None):
         raise ConfigError(f"配置文件不存在：{p_path}，请复制 config.yaml.example 并重命名为 config.yaml") from exc
     except IsADirectoryError as exc:
         raise ConfigError(f"配置文件路径无效：{p_path}") from exc
-    except yaml.YAMLError as exc:
+    except (yaml.YAMLError, UnicodeError) as exc:
         raise ConfigError(f"配置文件格式错误：{p_path}") from exc
     except OSError as exc:
         raise ConfigError(f"配置文件读取失败：{p_path}：{exc}") from exc
@@ -172,9 +154,11 @@ def load_config(p_path=None):
     raw_version = data.get('version', 0)
     try:
         version = int(raw_version)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         version = 0
-    if version != config_raw['version']:
+    current_version = config_raw['version']
+    data['version'] = version
+    if version < current_version:
         if version == 11:
             data = config_v11_update(data)
         if data.get('version') == 12:
@@ -183,42 +167,63 @@ def load_config(p_path=None):
             data = config_v13_update(data)
         if data.get('version') == 14:
             data = update_v14_update(data)
-        if data.get('version') != config_raw['version']:
+        if data['version'] != current_version:
             log.warning(f"未知的 config 版本：{raw_version}，将按默认配置补全缺失项")
-            update_config_need = True
-            data['version'] = config_raw['version']
+            data['version'] = current_version
+    elif version > current_version:
+        log.warning(f"配置版本 {version} 高于脚本支持的版本 {current_version}")
 
     # 用默认配置补全缺失项，避免旧版配置缺少新字段时崩溃
     data = merge_default_config(config_raw, data)
     # 去除cookie最末尾的空格
     data["account"]["cookie"] = str(data["account"]["cookie"]).rstrip(' ')
     config = data
-    if version != config_raw['version']:
+    if version < current_version:
+        update_config_need = True
         save_config(p_path=p_path, p_config=data)
     log.info("Config 加载完毕")
     return data
 
 
-def save_config(p_path=None, p_config=None):
-    global serverless
+def save_config(p_path=None, p_config=None) -> bool:
     if serverless:
         log.info("云函数执行，无法保存")
-        return None
+        return False
     if not p_path:
         p_path = config_Path
-    if not p_config:
+    if p_config is None:
         p_config = config
+    target = Path(p_path)
+    temporary_path = None
     try:
-        with open(p_path, "w+", encoding='utf-8') as f:
-            f.seek(0)
-            f.truncate()
-            f.write(yaml.dump(p_config, Dumper=yaml.Dumper, sort_keys=False, allow_unicode=True))
+        target = target.resolve()
+        try:
+            original_mode = stat.S_IMODE(target.stat().st_mode)
+            if not os.access(target, os.W_OK):
+                raise PermissionError("配置文件为只读")
+        except FileNotFoundError:
+            original_mode = None
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent, delete=False) as f:
+            temporary_path = Path(f.name)
+            yaml.dump(p_config, f, sort_keys=False, allow_unicode=True)
             f.flush()
-    except OSError:
-        serverless = True
-        log.info("配置保存失败，配置文件可能为只读")
+            os.fsync(f.fileno())
+        if original_mode is not None:
+            temporary_path.chmod(original_mode)
+        temporary_path.replace(target)
+        temporary_path = None
+    except (OSError, yaml.YAMLError) as exc:
+        log.warning(f"配置保存失败：{target}（{exc}）")
+        return False
     else:
         log.info("Config 保存完毕")
+        return True
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink(missing_ok=True)
+            except OSError as exc:
+                log.warning(f"临时配置清理失败：{temporary_path}（{exc}）")
 
 
 def clear_stoken():

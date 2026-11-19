@@ -37,9 +37,7 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
 
     info_list = http.get(info_url, headers=headers).json()
     if info_list.get("retcode") != 0:
-        msg = info_list.get("message") or info_list
-        log.error(f"获取签到信息失败：{msg}")
-        return f"获取签到信息失败：{msg}"
+        raise RuntimeError(f"获取签到信息失败（retcode={info_list.get('retcode')}）")
 
     info_data = info_list.get("data") or {}
     today = info_data.get("today")
@@ -53,16 +51,13 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
         return ret_msg
 
     if first_bind:
-        log.info("请手动签到一次")
-        ret_msg = "请手动签到一次"
-        return ret_msg
+        raise RuntimeError("请手动签到一次")
 
     awards_data = http.get(reward_url, headers=headers).json()
 
     awards = (awards_data.get("data") or {}).get("awards") or []
     if not awards:
-        log.warning("获取签到奖励列表失败")
-        return "获取签到奖励列表失败"
+        raise RuntimeError("获取签到奖励列表失败")
 
     log.info(f"准备签到：{today} ")
 
@@ -81,13 +76,10 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
         log.info("今天已经签到过")
         ret_msg = "今天已经签到过"
         return ret_msg
-    elif code != 0:
-        msg = response.get("message") or response
-        log.error(msg)
-        ret_msg = msg
-        return ret_msg
+    if code != 0:
+        raise RuntimeError(f"签到失败（retcode={code}）")
 
-    reward_index = min(max(total_sign_in_day - 1, 0), len(awards) - 1)
+    reward_index = min(max(total_sign_in_day, 0), len(awards) - 1)
     reward = awards[reward_index]
 
     log.info("签到成功")
@@ -95,7 +87,6 @@ def hoyo_checkin(event_base_url: str, act_id: str) -> str:
     log.info(f"\t今天获得的奖励是：{reward['cnt']}x 「{reward['name']}」")
     ret_msg = f"\t今天获得的奖励是：{reward['cnt']}x 「{reward['name']}」"
     return ret_msg
-    # logging.info(f"\tMessage: {response['message']}")
 
 
 def genshin():
@@ -140,16 +131,25 @@ def run_task(errors: list = None):
 
     if games.get('cookie', '') == '':
         log.warning("国际服未配置 Cookie！")
+        errors.append("国际服未配置 Cookie")
         games['enable'] = False
         config.save_config()
         return ''
 
+    handlers = {
+        "genshin": genshin,
+        "honkai_sr": honkai_sr,
+        "honkai3rd": honkai3rd,
+        "tears_of_themis": tears_of_themis,
+        "zzz": zzz,
+    }
     for game, data in games.items():
         if isinstance(data, dict) and data.get('checkin', False):
-            try:
-                ret_msg += f"\n\n{globals()[game]()}"
-            except KeyError:
+            if game not in handlers:
                 log.warning(f"国际服不支持的游戏配置项：{game}")
+                continue
+            try:
+                ret_msg += f"\n\n{handlers[game]()}"
             except Exception as e:
                 log.error(f"国际服 {game} 签到异常：{e}")
                 ret_msg += f"\n\n{game}：签到异常"
