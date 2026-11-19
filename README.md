@@ -28,8 +28,10 @@
 
 - 各模块独立执行：米游社异常时，游戏签到仍会继续；单个账号或游戏签到失败也不影响其他账号/游戏。
 - 出现异常时会生成“运行概况”，列出已完成、部分完成、失败/未完成、未启用和未执行的模块，并附带异常类型、原因及出错文件行号。
-- 推送/邮件消息的状态码为 `1`（全部失败）或 `2`（部分失败）；配置了 `error_push_only = true` 时失败任务仍会发送通知。
+- 任务结果状态码为 `0`（成功）、`1`（失败）、`2`（部分失败）或 `3`（触发验证码）。普通签到失败和 HTTP 限流会记录为错误。当同一次运行既有错误又触发验证码时，汇总优先报告失败状态。
+- `push.ini` 中设置 `error_push_only = true` 后会跳过成功通知。`push_server` 支持用逗号分隔多个渠道，例如 `smtp, telegram`。无法识别的渠道名和渠道明确返回的失败会计入推送结果。
 - 邮件推送使用 SMTP 时会设置 30 秒超时，避免网络异常导致任务长时间卡住。
+- Telegram 推送可在 `push.ini` 的 `[telegram]` 中设置 `http_proxy`，例如 `127.0.0.1:1080` 或 `http://127.0.0.1:1080`。
 - 青龙面板默认使用面板通知；缺少 `notify` 模块或通知失败时会回退项目推送，执行失败时也会额外尝试项目推送。
 - 需要使用邮件接收失败通知时，请在 `push.ini` 中启用 SMTP；设置 `AutoMihoyoBBS_push_project=1` 可让所有通知都优先走项目推送。
 
@@ -45,7 +47,7 @@
 
   4. [requirements.txt](https://raw.githubusercontent.com/2463741024/MihoyoBBSTools/master/requirements.txt) 是所需第三方模块，执行 `pip install -r requirements.txt` 安装模块
 
-  5. 打开目录中的**config 文件夹**复制`config.yaml.example`并改名为`config.yaml`，脚本的多用户功能靠读取不同的配置文件实现，你可以创建无数个`自定义名字.yaml`，脚本会扫描**config**目录下`yaml`为拓展名的文件，并按照名称顺序依次执行。
+  5. 在 `config` 目录中复制 `config.yaml.example` 并命名为 `config.yaml`。多用户模式为每个账号使用一份 `.yaml` 或 `.yml` 文件，按文件名顺序执行。青龙面板的文件名前缀见[环境变量设置](#2环境变量添加)。
 
   6. 请使用 vscode/notepad++等文本编辑器打开上一步复制好的配置文件
 
@@ -74,6 +76,8 @@
   12. 在命令提示符(cmd)/powershell，输入`python main.py`来进行执行
 
   13. 多用户的请使用`python main_multi.py`，多用户在需要自动执行的情况下请使用`python main_multi.py autorun`
+
+账号列表接口返回 Cookie 失效时，脚本最多尝试刷新一次 CookieToken，并只更新 Cookie 中的 `cookie_token` 字段。保存配置时会先写入临时文件，再替换原文件。单份配置保存失败时，其他账号仍可继续保存。
 
 ## 获取米游社 Cookie
 
@@ -452,6 +456,14 @@ Home Manager 支持 Linux 和 macOS 系统。
 - [crontab](https://github.com/josiahcarlson/parse-crontab)：Docker 定时任务解析
 - [requests](https://github.com/psf/requests)：仅作为 httpx 不可用时的备用选择，可能在未来版本移除
 - 青龙 `notify`：由青龙面板提供，用于发送面板通知；缺少时脚本会自动降级
+
+## 本地回归测试
+
+安装项目依赖后，在仓库根目录运行以下命令。测试使用临时配置、模拟响应和本地代理，无需填写真实 Cookie 或推送凭据。
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## 关于使用 Github Actions 运行
 
